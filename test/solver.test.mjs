@@ -44,8 +44,8 @@ test('a low-rated player hangs a queen far more often than a strong one', () => 
   const lines = [line('e2e4', { cp: 20 }), line('d1h5', { cp: -850 })];
   const weak = weighCandidates(lines, 2, eloParams(100));
   const strong = weighCandidates(lines, 2, eloParams(2000));
-  assert.ok(weak.candidates[1].prob > 0.05, `weak hang prob ${weak.candidates[1].prob}`);
-  assert.ok(strong.candidates[1].prob < 1e-6);
+  assert.ok(weak.candidates[1].prob > 0.3, `weak hang prob ${weak.candidates[1].prob}`);
+  assert.ok(strong.candidates[1].prob < 0.01);
 });
 
 test('randomness 0 always plays the top move', () => {
