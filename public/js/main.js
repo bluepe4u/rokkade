@@ -2,17 +2,17 @@ import { Chess, DEFAULT_POSITION } from '../vendor/chess.js';
 import { Board } from './board.js';
 import { Engine } from './engine.js';
 import {
-  eloParams, eloBand, weighCandidates, sampleMove, materialOutcome,
+  eloParams, eloBand, weighCandidates, sampleMove, materialOutcome, candidatePool,
   describeOutcome, formatScore, scoreToCp, uciToMove, materialOf,
 } from './solver.js';
 
 // ─────────────────────────── settings ───────────────────────────
-const STORE_KEY = 'sfet.settings.v1';
+const STORE_KEY = 'sfet.settings.v2';
 const DEFAULTS = {
   ctrl: { w: 'human', b: 'solver' },
   elo: { w: 1500, b: 1500 },
   n: 3,
-  pool: 8,
+  pool: 0,
   depth: 0,
   movetime: 2500,
   randomness: 1,
@@ -198,7 +198,7 @@ function startAnalysis() {
   const color = game.turn();
   const params = eloParams(settings.elo[color], { randomness: settings.randomness, depth: settings.depth });
   const legal = game.moves().length;
-  const multipv = Math.min(legal, Math.max(settings.n, settings.pool));
+  const multipv = Math.min(legal, Math.max(settings.n, candidatePool(params, legal, settings.pool)));
   const fen = game.fen();
   analysis = { token: myToken, fen, color, params, legal, lines: [], weighted: null, final: false };
   renderAnalysis();
@@ -337,7 +337,7 @@ function renderAnalysis() {
         </div>
         <div class="cand-pv mono">${formatPv(o.san, a.fen)}</div>
       </div>`;
-    li.title = `Click to play ${san}. Centipawn loss vs best: ${mate ? '—' : c.loss}`;
+    li.title = `Click to play ${san}. Win-chance loss vs best: ${c.loss.toFixed(1)}% · move accuracy ${Math.round(c.accuracy)}`;
     li.addEventListener('mouseenter', () => { hoverIdx = i; drawArrows(); });
     li.addEventListener('mouseleave', () => { hoverIdx = null; drawArrows(); });
     li.addEventListener('click', () => {
@@ -401,8 +401,8 @@ function renderSummary() {
   const p = a.params;
   el.summary.innerHTML = `<b>${COLOR_NAME[a.color]}</b> to move · solver at <b class="mono">${p.elo}</b> (${eloBand(p.elo)})
     <span class="kv"><span>depth</span><b class="mono">${p.depth}</b></span>
-    <span class="kv"><span>temperature</span><b class="mono">${p.temperature.toFixed(p.temperature < 10 ? 1 : 0)}cp</b></span>
-    <span class="kv"><span>blunder</span><b class="mono">${pct(p.blunder)}</b></span>`;
+    <span class="kv"><span>temperature</span><b class="mono">${p.tau.toFixed(p.tau < 10 ? 2 : 0)}</b></span>
+    ${a.weighted ? `<span class="kv"><span>expected accuracy</span><b class="mono">${Math.round(a.weighted.expectedAccuracy)}%</b></span>` : ''}`;
 }
 
 function renderEval() {
@@ -534,7 +534,7 @@ function scheduleReanalyse() {
 }
 
 bindRange('inN', 'outN', 'n', (v) => v);
-bindRange('inPool', 'outPool', 'pool', (v) => v);
+bindRange('inPool', 'outPool', 'pool', (v) => (v === 0 ? 'all' : v));
 bindRange('inDepth', 'outDepth', 'depth', (v) => (v === 0 ? 'auto' : v));
 bindRange('inTime', 'outTime', 'movetime', (v) => `${(v / 1000).toFixed(1)}s`);
 bindRange('inRand', 'outRand', 'randomness', (v) => `${v.toFixed(2)}×`);
