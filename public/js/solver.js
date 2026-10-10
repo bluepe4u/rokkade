@@ -1,12 +1,12 @@
 // Elo-weighted move selection and material-outcome analysis.
 //
-// Stockfish ranks the candidate moves (MultiPV). A player of a given Elo is
-// modelled as:
-//   * searching to an Elo-dependent depth,
-//   * choosing among the candidates with a softmax over centipawn loss, where
-//     the temperature shrinks as Elo grows (a 3000 player almost always picks
-//     the top move, a 400 player happily drops a pawn or two),
-//   * occasionally "blundering" — playing any legal move uniformly at random.
+// Every legal move is scored by Stockfish (MultiPV over the whole move list),
+// and its cost is measured as the drop in *win probability* versus the best
+// move, the same quantity chess.com / Lichess accuracy is built on. A player
+// of a given Elo picks moves with a softmax over that loss: the temperature
+// is high at low Elo (hanging a piece is a routine event) and collapses
+// towards zero near 3000 (always the top move). The temperature curve is
+// calibrated by self-play (tools/calibrate.mjs) against accuracy targets.
 import { Chess } from '../vendor/chess.js';
 
 export const ELO_MIN = 0;
@@ -33,23 +33,64 @@ export function eloBand(elo) {
   return label;
 }
 
+// Softmax temperature (in win-% points) at each Elo anchor, interpolated
+// log-linearly in between. Calibrated with tools/calibrate.mjs so that self-play
+// accuracy roughly tracks ACCURACY_TARGETS below.
+export const TAU_ANCHORS = [
+  [0, 30],
+  [500, 12],
+  [1000, 5],
+  [1500, 2.2],
+  [2000, 1],
+  [2500, 0.45],
+  [3000, 0.15],
+];
+
+/** Approximate chess.com-style average move accuracy we aim for at each Elo. */
+export const ACCURACY_TARGETS = [
+  [0, 35], [500, 60], [1000, 80], [1500, 87], [2000, 91], [2500, 95], [3000, 97],
+];
+
+function interpolateLog(anchors, x) {
+  if (x <= anchors[0][0]) return anchors[0][1];
+  for (let i = 1; i < anchors.length; i++) {
+    const [x1, y1] = anchors[i];
+    if (x <= x1) {
+      const [x0, y0] = anchors[i - 1];
+      const t = (x - x0) / (x1 - x0);
+      return Math.exp(Math.log(y0) + t * (Math.log(y1) - Math.log(y0)));
+    }
+  }
+  return anchors[anchors.length - 1][1];
+}
+
 /**
  * Derive the search/selection parameters for an Elo.
  * @param {number} elo 0..3000
- * @param {{randomness?: number, depth?: number}} opts depth 0 = derive from Elo
+ * @param {{randomness?: number, depth?: number, tau?: number}} opts
+ *   depth 0 = derive from Elo; tau overrides the calibrated temperature.
  */
-export function eloParams(elo, { randomness = 1, depth = 0 } = {}) {
+export function eloParams(elo, { randomness = 1, depth = 0, tau } = {}) {
   const e = Math.min(ELO_MAX, Math.max(ELO_MIN, elo));
   const r = Math.max(0, randomness);
-  const autoDepth = Math.round(1 + 17 * Math.pow(e / ELO_MAX, 1.3));
+  const autoDepth = Math.round(1 + 17 * Math.pow(e / ELO_MAX, 1.6));
   return {
     elo: e,
     depth: depth > 0 ? depth : autoDepth,
-    // Softmax temperature in centipawns: 400cp @0, ~76 @1000, ~14 @2000, ~3 @3000.
-    temperature: Math.max(0.5, 400 * Math.exp(-e / 600)) * r,
-    // Probability of a random legal move: 25% @0, ~3% @1000, ~0.5% @2000.
-    blunder: Math.min(0.6, 0.25 * Math.exp(-e / 500) * r),
+    // Win-% points of loss that cut a move's selection weight by a factor e.
+    tau: (tau ?? interpolateLog(TAU_ANCHORS, e)) * r,
   };
+}
+
+/**
+ * How many engine lines to request. With `poolSetting` 0 ("all") every legal
+ * move is scored, which is what the model needs at club level and below;
+ * strong players almost never leave the top handful, so their deep searches
+ * stay affordable with a smaller pool.
+ */
+export function candidatePool(params, legalCount, poolSetting = 0) {
+  if (poolSetting > 0) return Math.min(legalCount, poolSetting);
+  return params.depth <= 10 ? legalCount : Math.min(legalCount, 10);
 }
 
 /** Score (from side-to-move POV) as a single comparable centipawn number. */
@@ -61,6 +102,19 @@ export function scoreToCp(score) {
   return score.cp;
 }
 
+/** Winning chances (0-100) for the side to move — the Lichess curve. */
+export function winPct(score) {
+  const cp = score.mate !== undefined
+    ? (score.mate > 0 ? 1000 : -1000)
+    : Math.max(-1000, Math.min(1000, score.cp));
+  return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * cp)) - 1);
+}
+
+/** Accuracy (0-100) of a move that drops `loss` win-% points — the Lichess formula. */
+export function moveAccuracy(loss) {
+  return Math.max(0, Math.min(100, 103.1668 * Math.exp(-0.04354 * Math.max(0, loss)) - 3.1669));
+}
+
 export function formatScore(score, povSign = 1) {
   if (score.mate !== undefined) {
     const m = score.mate * povSign;
@@ -70,31 +124,45 @@ export function formatScore(score, povSign = 1) {
   return `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(2)}`;
 }
 
+// Loss assumed for legal moves the engine did not list (pool smaller than the move list).
+const UNLISTED_MIN_LOSS = 15;
+
 /**
  * Attach Elo-weighted selection probabilities to engine lines.
  * @param {Array<{score, pv}>} lines engine lines (best first)
  * @param {number} legalCount number of legal moves in the position
- * @param {{temperature:number, blunder:number}} params from eloParams()
- * @returns {{candidates: Array, otherProb: number}}
+ * @param {{tau:number}} params from eloParams()
+ * @returns {{candidates: Array, otherProb: number, expectedAccuracy: number}}
  */
 export function weighCandidates(lines, legalCount, params) {
-  if (!lines.length) return { candidates: [], otherProb: 0 };
-  const values = lines.map((l) => scoreToCp(l.score));
-  const best = Math.max(...values);
-  const T = Math.max(params.temperature, 1e-6);
-  const weights = values.map((v) => Math.exp(-(best - v) / T));
-  const total = weights.reduce((a, b) => a + b, 0);
-  const n = Math.max(legalCount, lines.length);
-  const blunder = n > 1 ? params.blunder : 0;
+  if (!lines.length) return { candidates: [], otherProb: 0, expectedAccuracy: 100 };
+  const wins = lines.map((l) => winPct(l.score));
+  const cps = lines.map((l) => scoreToCp(l.score));
+  const bestWin = Math.max(...wins);
+  const bestCp = Math.max(...cps);
+  const losses = wins.map((w) => bestWin - w);
+  const unlisted = Math.max(0, legalCount - lines.length);
+  const unlistedLoss = Math.max(UNLISTED_MIN_LOSS, ...losses);
+  const weight = (loss, cp) => {
+    if (params.tau <= 1e-9) return cp === bestCp ? 1 : 0;
+    // Tiny centipawn tie-break so equal win-% moves (e.g. two mates) prefer the better one.
+    return Math.exp(-(loss + (bestCp - cp) * 1e-4) / params.tau);
+  };
+  const weights = losses.map((loss, i) => weight(loss, cps[i]));
+  const otherWeight = unlisted ? unlisted * (params.tau <= 1e-9 ? 0 : Math.exp(-unlistedLoss / params.tau)) : 0;
+  const total = weights.reduce((a, b) => a + b, 0) + otherWeight;
   const candidates = lines.map((l, i) => ({
     ...l,
     move: l.pv[0],
-    cp: values[i],
-    loss: best - values[i],
-    prob: (1 - blunder) * (weights[i] / total) + blunder / n,
+    cp: cps[i],
+    loss: losses[i],
+    accuracy: moveAccuracy(losses[i]),
+    prob: weights[i] / total,
   }));
-  const otherProb = Math.max(0, 1 - candidates.reduce((a, c) => a + c.prob, 0));
-  return { candidates, otherProb };
+  const otherProb = otherWeight / total;
+  const expectedAccuracy = candidates.reduce((a, c) => a + c.prob * c.accuracy, 0)
+    + otherProb * moveAccuracy(unlistedLoss);
+  return { candidates, otherProb, expectedAccuracy };
 }
 
 /**

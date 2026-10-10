@@ -84,7 +84,8 @@
         </label>
         <label class="field">
           <span class="field-row"><span>Candidate pool (MultiPV)</span><output class="mono" id="outPool"></output></span>
-          <input type="range" min="1" max="12" step="1" id="inPool" />
+          <input type="range" min="0" max="12" step="1" id="inPool" />
+          <span class="field-hint">0 = score every legal move (needed for realistic low-Elo play)</span>
         </label>
         <label class="field">
           <span class="field-row"><span>Search depth</span><output class="mono" id="outDepth"></output></span>
@@ -98,7 +99,7 @@
         <label class="field">
           <span class="field-row"><span>Randomness</span><output class="mono" id="outRand"></output></span>
           <input type="range" min="0" max="2" step="0.05" id="inRand" />
-          <span class="field-hint">Scales temperature &amp; blunder rate. 0 = always top move</span>
+          <span class="field-hint">Multiplies the Elo temperature. 0 = always the top move</span>
         </label>
         <label class="field">
           <span class="field-row"><span>Material horizon</span><output class="mono" id="outHorizon"></output></span>

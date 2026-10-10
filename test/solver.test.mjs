@@ -2,21 +2,29 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   eloParams, weighCandidates, sampleMove, materialOutcome, describeOutcome, scoreToCp, formatScore,
+  candidatePool, winPct, moveAccuracy,
 } from '../public/js/solver.js';
 import { parseInfo } from '../public/js/engine.js';
 
 const line = (move, score) => ({ pv: [move], score });
 
-test('stronger Elo means deeper search, lower temperature and fewer blunders', () => {
+test('stronger Elo means deeper search and a colder temperature', () => {
   const weak = eloParams(400);
   const strong = eloParams(2800);
   assert.ok(strong.depth > weak.depth);
-  assert.ok(strong.temperature < weak.temperature);
-  assert.ok(strong.blunder < weak.blunder);
+  assert.ok(strong.tau < weak.tau);
   assert.equal(eloParams(0).depth, 1);
   assert.equal(eloParams(3000).depth, 18);
   assert.equal(eloParams(1500, { depth: 12 }).depth, 12);
-  assert.equal(eloParams(1500, { randomness: 0 }).blunder, 0);
+  assert.equal(eloParams(1500, { randomness: 0 }).tau, 0);
+  // Temperature is monotone in Elo.
+  for (let e = 0; e < 3000; e += 50) assert.ok(eloParams(e).tau >= eloParams(e + 50).tau);
+});
+
+test('candidate pool covers every legal move at low Elo', () => {
+  assert.equal(candidatePool(eloParams(300), 34, 0), 34);
+  assert.equal(candidatePool(eloParams(2900), 34, 0), 10);
+  assert.equal(candidatePool(eloParams(300), 34, 5), 5);
 });
 
 test('probabilities sum to 1 and favour the best move more at high Elo', () => {
@@ -28,8 +36,31 @@ test('probabilities sum to 1 and favour the best move more at high Elo', () => {
     assert.ok(Math.abs(total - 1) < 1e-9);
   }
   assert.ok(strong.candidates[0].prob > weak.candidates[0].prob);
-  assert.ok(strong.candidates[0].prob > 0.9);
   assert.ok(weak.candidates[2].prob > strong.candidates[2].prob);
+  assert.ok(strong.expectedAccuracy > weak.expectedAccuracy);
+});
+
+test('a low-rated player hangs a queen far more often than a strong one', () => {
+  const lines = [line('e2e4', { cp: 20 }), line('d1h5', { cp: -850 })];
+  const weak = weighCandidates(lines, 2, eloParams(100));
+  const strong = weighCandidates(lines, 2, eloParams(2000));
+  assert.ok(weak.candidates[1].prob > 0.05, `weak hang prob ${weak.candidates[1].prob}`);
+  assert.ok(strong.candidates[1].prob < 1e-6);
+});
+
+test('randomness 0 always plays the top move', () => {
+  const lines = [line('e2e4', { cp: 30 }), line('d2d4', { cp: 29 })];
+  const w = weighCandidates(lines, 20, eloParams(0, { randomness: 0 }));
+  assert.equal(w.candidates[0].prob, 1);
+  assert.equal(w.otherProb, 0);
+});
+
+test('win percentage and move accuracy follow the Lichess curves', () => {
+  assert.equal(winPct({ cp: 0 }), 50);
+  assert.ok(winPct({ cp: 300 }) > 70 && winPct({ cp: 300 }) < 80);
+  assert.equal(winPct({ mate: 3 }), winPct({ cp: 5000 }));
+  assert.ok(Math.abs(moveAccuracy(0) - 100) < 0.01);
+  assert.ok(moveAccuracy(20) < 45);
 });
 
 test('mate scores dominate centipawn scores', () => {
