@@ -38,10 +38,10 @@ export function eloBand(elo) {
 // accuracy roughly tracks ACCURACY_TARGETS below.
 export const TAU_ANCHORS = [
   [0, 150],
-  [500, 40],
+  [500, 80],
   [1000, 25],
   [1500, 12],
-  [2000, 6],
+  [2000, 4.5],
   [2500, 2.5],
   [3000, 0.7],
 ];
@@ -49,10 +49,11 @@ export const TAU_ANCHORS = [
 /**
  * Self-play average move accuracy (Lichess per-move formula) we aim for at
  * each Elo. Anchored on user feedback: the first model scored ~69 here at
- * "100 Elo" and chess.com rated those games ~1000-1200.
+ * "100 Elo" and chess.com rated those games ~1000-1200. ~52 is the floor:
+ * it is what uniformly random self-play scores, so 0 Elo plays near-randomly.
  */
 export const ACCURACY_TARGETS = [
-  [0, 45], [500, 58], [1000, 70], [1500, 80], [2000, 87], [2500, 92], [3000, 96],
+  [0, 52], [500, 60], [1000, 70], [1500, 80], [2000, 87], [2500, 92], [3000, 96],
 ];
 
 function interpolateLog(anchors, x) {

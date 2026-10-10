@@ -23,8 +23,8 @@ Your browser opens at <http://localhost:8080>. The page has to be served over HT
 - **n-best moves (1–8)** drawn as numbered arrows. Arrow thickness and opacity follow the probability that a player of the chosen Elo picks that move.
 - **Material outcome per line:** each candidate's principal variation is played out to the *material horizon*. The panel then shows the net change (`+3`, `−1`, `±0`), a short description ("Wins a knight", "Even trade", "Mates in 2"), and the pieces won and lost. If the horizon would cut an exchange in half, it is extended until the captures stop.
 - **Hover a line** to see its continuation as a numbered arrow sequence. **Click a line** to play it.
-- **Solver moves are sampled** from the Elo-weighted distribution. The move list tags each one with the line it came from, and the tooltip shows its probability.
-- **Parameters:** candidate pool (MultiPV), search depth (auto from Elo, or fixed), max think time, randomness multiplier, material horizon, solver move delay, arrows and hints on/off, coordinates.
+- **Solver moves are sampled** from the Elo-weighted distribution over all legal moves. The move list tags each one with the line it came from, and the tooltip shows its probability.
+- **Parameters:** candidate pool (MultiPV, default: every legal move), search depth (auto from Elo, or fixed), max think time, randomness multiplier, material horizon, solver move delay, arrows and hints on/off, coordinates.
 - Eval bar, captured pieces, move list with navigation, FEN load/copy, PGN export, flip, pause, promotion picker, drag-and-drop or click-to-move, and keyboard shortcuts.
 
 ### Keyboard
@@ -35,12 +35,21 @@ Your browser opens at <http://localhost:8080>. The page has to be served over HT
 
 Stockfish's built-in `UCI_Elo` only goes down to about 1320. To cover 0–3000, the solver models a player as follows (`public/js/solver.js`):
 
-1. **Search depth** rises with Elo, from 1 ply at 0 to 18 plies at 3000 (`1 + 17·(elo/3000)^1.3`), unless you set a fixed depth.
-2. Stockfish returns the top *k* moves (MultiPV). Each move's **centipawn loss** against the best move is turned into a probability with a **softmax**. The temperature is `400·e^(−elo/600)` cp: about 400 at 0, 76 at 1000, 14 at 2000 and 3 at 3000.
-3. A **blunder rate** of `0.25·e^(−elo/500)` (25% at 0, about 3% at 1000, about 0.5% at 2000) is spread evenly over *all* legal moves. That is why weak players sometimes play moves the engine never listed.
-4. The **Randomness** slider scales both the temperature and the blunder rate (0 = always play the top move).
+1. **Every legal move is scored.** Stockfish searches with MultiPV covering the whole move list (strong levels use the top 10). Search depth grows with Elo: 1 ply at 0, about 10 at 2000, 18 at 3000.
+2. **Each move's cost is its drop in winning chances** versus the best move, using the Lichess win-% curve. This is the same quantity that chess.com and Lichess accuracy are computed from.
+3. **Moves are picked with a softmax over that loss.** The temperature is high at low Elo, where hanging a piece is a routine event, and falls towards zero near 3000. The *Randomness* slider multiplies it (0 = always the top move).
+4. **The temperature curve is calibrated by self-play.** `tools/calibrate.mjs` plays solver-vs-solver games at each level, reviews every move at depth 12, and reports the average Lichess per-move accuracy:
 
-Mate scores rank above any centipawn score, so a forced mate gets almost all of the probability at any reasonable Elo.
+| Elo | 0 | 500 | 1000 | 1500 | 2000 | 2500 | 3000 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Self-play move accuracy | ~52 (random play) | ~62 | ~72 | ~80 | ~87 | ~94 | ~97 |
+
+These numbers are approximate: games at the low end vary a lot from run to run. chess.com's CAPS formula isn't public, so treat the mapping to chess.com ratings as rough. The solver panel also shows the **expected accuracy** of the move it is about to choose.
+
+```bash
+node tools/calibrate.mjs --elo 0,1000,2000 --games 12    # measure
+node tools/calibrate.mjs --elo 1000 --tau 25             # try a temperature
+```
 
 ## Project layout
 
@@ -56,6 +65,7 @@ public/
   pieces/                      cburnett SVG pieces (CC BY-SA 3.0, via lichess)
 server.js / serve.py           zero-dependency static servers
 start.bat / start.sh           launchers
+tools/calibrate.mjs            self-play accuracy calibration (Node)
 test/                          node --test unit tests (npm test)
 ```
 
