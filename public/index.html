@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stockfish Elo Terminal</title>
+  <meta name="description" content="Play either side against or alongside an Elo-weighted Stockfish solver that highlights its n-best moves and their material outcome." />
+  <link rel="icon" href="pieces/wN.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Onest:wght@400;500;600;700&family=Sora:wght@500;600;700&display=swap" />
+  <link rel="stylesheet" href="css/app.css" />
+  <script>
+    try { const t = localStorage.getItem('sfet.theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark"><img src="pieces/wN.svg" alt="" /></span>
+      <span class="brand-name">STOCKFISH <em>ELO</em> TERMINAL</span>
+    </div>
+    <div class="topbar-status">
+      <span class="engine-dot" id="engineDot"></span>
+      <span id="engineName">Loading engine…</span>
+    </div>
+    <div class="topbar-actions">
+      <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- ───────── Left: parameters ───────── -->
+    <aside class="panel settings" aria-label="Solver parameters">
+      <section class="card">
+        <h2 class="card-title">Sides</h2>
+        <div class="side-config" data-color="w">
+          <div class="side-head">
+            <span class="side-swatch white"></span>
+            <span class="side-name">White</span>
+            <div class="segmented" role="radiogroup" aria-label="White controller">
+              <button data-ctrl="human" role="radio">Human</button>
+              <button data-ctrl="solver" role="radio">Solver</button>
+            </div>
+          </div>
+          <label class="field">
+            <span class="field-row"><span>Solver Elo</span><output class="mono" data-out="elo"></output></span>
+            <input type="range" min="0" max="3000" step="25" data-input="elo" />
+            <span class="field-hint" data-out="band"></span>
+          </label>
+        </div>
+        <div class="side-config" data-color="b">
+          <div class="side-head">
+            <span class="side-swatch black"></span>
+            <span class="side-name">Black</span>
+            <div class="segmented" role="radiogroup" aria-label="Black controller">
+              <button data-ctrl="human" role="radio">Human</button>
+              <button data-ctrl="solver" role="radio">Solver</button>
+            </div>
+          </div>
+          <label class="field">
+            <span class="field-row"><span>Solver Elo</span><output class="mono" data-out="elo"></output></span>
+            <input type="range" min="0" max="3000" step="25" data-input="elo" />
+            <span class="field-hint" data-out="band"></span>
+          </label>
+        </div>
+        <div class="presets">
+          <span class="presets-label">Quick Elo</span>
+          <button class="chip" data-preset="400">400</button>
+          <button class="chip" data-preset="1200">1200</button>
+          <button class="chip" data-preset="1800">1800</button>
+          <button class="chip" data-preset="2400">2400</button>
+          <button class="chip" data-preset="3000">3000</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 class="card-title">Solver</h2>
+        <label class="field">
+          <span class="field-row"><span>Best moves shown (n)</span><output class="mono" id="outN"></output></span>
+          <input type="range" min="1" max="8" step="1" id="inN" />
+        </label>
+        <label class="field">
+          <span class="field-row"><span>Candidate pool (MultiPV)</span><output class="mono" id="outPool"></output></span>
+          <input type="range" min="1" max="12" step="1" id="inPool" />
+        </label>
+        <label class="field">
+          <span class="field-row"><span>Search depth</span><output class="mono" id="outDepth"></output></span>
+          <input type="range" min="0" max="24" step="1" id="inDepth" />
+          <span class="field-hint">0 = derived from Elo</span>
+        </label>
+        <label class="field">
+          <span class="field-row"><span>Max think time</span><output class="mono" id="outTime"></output></span>
+          <input type="range" min="200" max="10000" step="100" id="inTime" />
+        </label>
+        <label class="field">
+          <span class="field-row"><span>Randomness</span><output class="mono" id="outRand"></output></span>
+          <input type="range" min="0" max="2" step="0.05" id="inRand" />
+          <span class="field-hint">Scales temperature &amp; blunder rate. 0 = always top move</span>
+        </label>
+        <label class="field">
+          <span class="field-row"><span>Material horizon</span><output class="mono" id="outHorizon"></output></span>
+          <input type="range" min="1" max="16" step="1" id="inHorizon" />
+          <span class="field-hint">Plies of each line played out to measure material</span>
+        </label>
+        <label class="field">
+          <span class="field-row"><span>Solver move delay</span><output class="mono" id="outDelay"></output></span>
+          <input type="range" min="0" max="3000" step="100" id="inDelay" />
+        </label>
+      </section>
+
+      <section class="card">
+        <h2 class="card-title">Display</h2>
+        <label class="toggle"><input type="checkbox" id="inArrows" /><span>Arrows on board</span></label>
+        <label class="toggle"><input type="checkbox" id="inHintsHuman" /><span>Hints on human turns</span></label>
+        <label class="toggle"><input type="checkbox" id="inHintsSolver" /><span>Hints on solver turns</span></label>
+        <label class="toggle"><input type="checkbox" id="inCoords" /><span>Board coordinates</span></label>
+      </section>
+    </aside>
+
+    <!-- ───────── Center: board ───────── -->
+    <section class="center">
+      <div class="player-strip" id="stripTop"></div>
+      <div class="board-wrap">
+        <div class="evalbar" id="evalbar" title="Evaluation">
+          <div class="evalbar-fill" id="evalFill"></div>
+          <span class="evalbar-label" id="evalLabel">0.0</span>
+        </div>
+        <div class="board-holder">
+          <div id="board"></div>
+          <div class="promo" id="promo" hidden></div>
+          <div class="game-over" id="gameOver" hidden></div>
+        </div>
+      </div>
+      <div class="player-strip" id="stripBottom"></div>
+      <div class="controls">
+        <button class="btn" id="btnNew" title="New game (N)">New game</button>
+        <button class="btn icon" id="btnFirst" title="First move (Home)">⏮</button>
+        <button class="btn icon" id="btnBack" title="Back (←)">◀</button>
+        <button class="btn icon" id="btnFwd" title="Forward (→)">▶</button>
+        <button class="btn icon" id="btnLast" title="Last move (End)">⏭</button>
+        <button class="btn" id="btnFlip" title="Flip board (F)">Flip</button>
+        <button class="btn cta" id="btnSolve" title="Let the solver play this move (Space)">Solver move</button>
+        <button class="btn" id="btnPause" title="Pause / resume solver sides (P)">Pause</button>
+      </div>
+    </section>
+
+    <!-- ───────── Right: analysis ───────── -->
+    <aside class="panel analysis" aria-label="Analysis">
+      <section class="card candidates-card">
+        <div class="card-head">
+          <h2 class="card-title">Solver lines</h2>
+          <span class="badge" id="searchInfo">idle</span>
+        </div>
+        <p class="card-sub" id="solverSummary"></p>
+        <ol class="candidates" id="candidates"></ol>
+        <div class="other-moves" id="otherMoves"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2 class="card-title">Moves</h2>
+          <span class="badge" id="statusBadge"></span>
+        </div>
+        <ol class="movelist" id="movelist"></ol>
+      </section>
+
+      <section class="card">
+        <h2 class="card-title">Position</h2>
+        <div class="fen-row">
+          <input class="input mono" id="fenInput" spellcheck="false" aria-label="FEN" />
+        </div>
+        <div class="btn-row">
+          <button class="btn sm" id="btnLoadFen">Load FEN</button>
+          <button class="btn sm" id="btnCopyFen">Copy FEN</button>
+          <button class="btn sm" id="btnCopyPgn">Copy PGN</button>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
