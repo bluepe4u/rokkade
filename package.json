@@ -1,0 +1,11 @@
+{
+  "name": "stockfish-elo-weighted",
+  "version": "1.0.0",
+  "description": "Browser chess terminal with an Elo-weighted Stockfish solver (0-3000) that highlights n-best moves and their material outcome.",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.mjs"
+  }
+}
