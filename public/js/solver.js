@@ -1,12 +1,20 @@
-// Elo-weighted move selection and material-outcome analysis.
+// The solver: combines Maia-2 (how likely is a human of this Elo to play each
+// move?) with Stockfish (how much does each move cost?) into one move
+// distribution, and measures what each line does to the material balance.
 //
-// Every legal move is scored by Stockfish (MultiPV over the whole move list),
-// and its cost is measured as the drop in *win probability* versus the best
-// move, the same quantity chess.com / Lichess accuracy is built on. A player
-// of a given Elo picks moves with a softmax over that loss: the temperature
-// is high at low Elo (hanging a piece is a routine event) and collapses
-// towards zero near 3000 (always the top move). The temperature curve is
-// calibrated by self-play (tools/calibrate.mjs) against accuracy targets.
+//   q(m) = Maia(m | elo)^alpha            human prior (alpha < 1 flattens it, e.g. below
+//                                         Maia's trained range; alpha -> 0 hands over to the engine)
+//   s(m) = exp(-winLoss(m) / tau)         soundness: win-% points lost against the best move
+//   g    = sum_m Maia(m) * s(m)           how likely a typical player of this Elo is to find
+//                                         a sound move in THIS position
+//   beta = cap(elo) * g^kappa             how strictly the engine vetoes unsound moves
+//   p(m) ~ q(m) * s(m)^beta
+//
+// Where good moves are easy to find (g high) bad moves are pruned; where the sound
+// moves are ones a typical player would miss (g low) beta collapses and Maia's
+// own, human, mistakes come through. Errors therefore cluster in the positions
+// where players of that rating actually go wrong, instead of being sprinkled
+// at random.
 import { Chess } from '../vendor/chess.js';
 
 export const ELO_MIN = 0;
@@ -33,66 +41,75 @@ export function eloBand(elo) {
   return label;
 }
 
-// Softmax temperature (in win-% points) at each Elo anchor, interpolated
-// log-linearly in between. Calibrated with tools/calibrate.mjs so that self-play
-// accuracy roughly tracks ACCURACY_TARGETS below.
-export const TAU_ANCHORS = [
-  [0, 30],
-  [500, 12],
-  [1000, 5],
-  [1500, 2.2],
-  [2000, 1],
-  [2500, 0.45],
-  [3000, 0.15],
-];
+// ───────────────────────── per-Elo parameters ─────────────────────────
+// Maia-2 was trained on rated Lichess games and only distinguishes ratings from
+// "<1100" to ">=2000". Between 1100 and 2000 it is used as is. Outside that range
+// the curves below extrapolate: below 1100 the human prior is flattened and the
+// engine's veto weakened (more, and more random, mistakes); above 2000 the prior
+// fades out and the engine's veto tightens until, near 3000, it plays the top
+// engine moves. tools/calibrate.mjs measures the resulting self-play accuracy.
+const ANCHORS = {
+  elo:     [0,    500,  1000, 1500, 2000, 2500, 3000],
+  alpha:   [0.35, 0.6,  0.95, 1,    1,    0.6,  0.2],
+  tau:     [8,    8,    7,    6,    5,    2,    0.5],   // win-% points
+  betaCap: [0,    0.3,  0.6,  0.8,  1,    1,    1],
+  kappa:   [1,    1,    1,    1,    1,    0.4,  0],
+};
 
-/** Approximate chess.com-style average move accuracy we aim for at each Elo. */
-export const ACCURACY_TARGETS = [
-  [0, 35], [500, 60], [1000, 80], [1500, 87], [2000, 91], [2500, 95], [3000, 97],
-];
-
-function interpolateLog(anchors, x) {
-  if (x <= anchors[0][0]) return anchors[0][1];
-  for (let i = 1; i < anchors.length; i++) {
-    const [x1, y1] = anchors[i];
-    if (x <= x1) {
-      const [x0, y0] = anchors[i - 1];
-      const t = (x - x0) / (x1 - x0);
-      return Math.exp(Math.log(y0) + t * (Math.log(y1) - Math.log(y0)));
+function interpolate(ys, elo, log = false) {
+  const xs = ANCHORS.elo;
+  if (elo <= xs[0]) return ys[0];
+  for (let i = 1; i < xs.length; i++) {
+    if (elo <= xs[i]) {
+      const t = (elo - xs[i - 1]) / (xs[i] - xs[i - 1]);
+      return log
+        ? Math.exp(Math.log(ys[i - 1]) + t * (Math.log(ys[i]) - Math.log(ys[i - 1])))
+        : ys[i - 1] + t * (ys[i] - ys[i - 1]);
     }
   }
-  return anchors[anchors.length - 1][1];
+  return ys[ys.length - 1];
 }
 
+// Engine-only fallback (Maia-2 not available): softmax over win-% loss. These
+// temperatures come from the earlier self-play calibration of that model.
+const ENGINE_ONLY_TAU = [150, 80, 25, 12, 4.5, 2.5, 0.7];
+
 /**
- * Derive the search/selection parameters for an Elo.
- * @param {number} elo 0..3000
- * @param {{randomness?: number, depth?: number, tau?: number}} opts
- *   depth 0 = derive from Elo; tau overrides the calibrated temperature.
+ * Everything derived from one number, the Elo. `humanness` (advanced, default 1)
+ * scales how much room Maia's human errors get: above 1 = more human slips,
+ * below 1 = the engine vetoes more strictly.
  */
-export function eloParams(elo, { randomness = 1, depth = 0, tau } = {}) {
+export function playerModel(elo, { humanness = 1, maia = true } = {}) {
   const e = Math.min(ELO_MAX, Math.max(ELO_MIN, elo));
-  const r = Math.max(0, randomness);
-  const autoDepth = Math.round(1 + 17 * Math.pow(e / ELO_MAX, 1.6));
-  return {
+  const h = Math.max(0.05, humanness);
+  const m = {
     elo: e,
-    depth: depth > 0 ? depth : autoDepth,
-    // Win-% points of loss that cut a move's selection weight by a factor e.
-    tau: (tau ?? interpolateLog(TAU_ANCHORS, e)) * r,
+    maia,
+    alpha: interpolate(ANCHORS.alpha, e),
+    tau: interpolate(ANCHORS.tau, e, true),
+    betaCap: Math.min(1, interpolate(ANCHORS.betaCap, e) / h),
+    kappa: interpolate(ANCHORS.kappa, e),
+  };
+  if (!maia) {
+    Object.assign(m, { alpha: 0, tau: interpolate(ENGINE_ONLY_TAU, e, true) * h, betaCap: 1, kappa: 0 });
+  }
+  return m;
+}
+
+/** How hard Stockfish looks. Weaker players are judged shallowly (the judge only needs to
+ *  spot what a human of that level would also be punished for); strong ones need depth. */
+export function searchBudget(elo, legalCount) {
+  const t = Math.max(0, (Math.min(elo, ELO_MAX) - 2000) / 1000);
+  return {
+    depth: Math.round(10 + 6 * t),
+    movetime: Math.round(1500 + 2000 * t),
+    // Score every legal move (the human prior needs the whole list); only the very
+    // strongest levels, where the prior has faded, settle for the best dozen.
+    multipv: elo >= 2300 ? Math.min(legalCount, 12) : legalCount,
   };
 }
 
-/**
- * How many engine lines to request. With `poolSetting` 0 ("all") every legal
- * move is scored, which is what the model needs at club level and below;
- * strong players almost never leave the top handful, so their deep searches
- * stay affordable with a smaller pool.
- */
-export function candidatePool(params, legalCount, poolSetting = 0) {
-  if (poolSetting > 0) return Math.min(legalCount, poolSetting);
-  return params.depth <= 10 ? legalCount : Math.min(legalCount, 10);
-}
-
+// ───────────────────────── evaluation helpers ─────────────────────────
 /** Score (from side-to-move POV) as a single comparable centipawn number. */
 export function scoreToCp(score) {
   if (score.mate !== undefined) {
@@ -124,62 +141,72 @@ export function formatScore(score, povSign = 1) {
   return `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(2)}`;
 }
 
-// Loss assumed for legal moves the engine did not list (pool smaller than the move list).
+// Win-% loss assumed for legal moves the engine did not score (only at the top levels).
 const UNLISTED_MIN_LOSS = 15;
 
 /**
- * Attach Elo-weighted selection probabilities to engine lines.
- * @param {Array<{score, pv}>} lines engine lines (best first)
- * @param {number} legalCount number of legal moves in the position
- * @param {{tau:number}} params from eloParams()
- * @returns {{candidates: Array, otherProb: number, expectedAccuracy: number}}
+ * Combine the engine's lines with Maia-2's move probabilities.
+ *
+ * @param {Array<{score, pv, depth?}>} lines Stockfish MultiPV lines
+ * @param {Map<string, number>|null} prior Maia-2 probability per legal move (null = engine only)
+ * @param {string[]} legalUci every legal move
+ * @param {ReturnType<typeof playerModel>} model
+ * @returns {{candidates: Array, soundMass: number, beta: number, expectedAccuracy: number, humanAccuracy: number}}
+ *   candidates: one entry per legal move, sorted by final probability. `pv`/`score` are
+ *   missing on moves the engine did not score.
  */
-export function weighCandidates(lines, legalCount, params) {
-  if (!lines.length) return { candidates: [], otherProb: 0, expectedAccuracy: 100 };
+export function blendMoves(lines, prior, legalUci, model) {
+  if (!legalUci.length) return { candidates: [], soundMass: 1, beta: 1, expectedAccuracy: 100, humanAccuracy: 100 };
+  const byMove = new Map(lines.map((l) => [l.pv[0], l]));
   const wins = lines.map((l) => winPct(l.score));
   const cps = lines.map((l) => scoreToCp(l.score));
-  const bestWin = Math.max(...wins);
-  const bestCp = Math.max(...cps);
-  const losses = wins.map((w) => bestWin - w);
-  const unlisted = Math.max(0, legalCount - lines.length);
-  const unlistedLoss = Math.max(UNLISTED_MIN_LOSS, ...losses);
-  const weight = (loss, cp) => {
-    if (params.tau <= 1e-9) return cp === bestCp ? 1 : 0;
-    // Tiny centipawn tie-break so equal win-% moves (e.g. two mates) prefer the better one.
-    return Math.exp(-(loss + (bestCp - cp) * 1e-4) / params.tau);
-  };
-  const weights = losses.map((loss, i) => weight(loss, cps[i]));
-  const otherWeight = unlisted ? unlisted * (params.tau <= 1e-9 ? 0 : Math.exp(-unlistedLoss / params.tau)) : 0;
-  const total = weights.reduce((a, b) => a + b, 0) + otherWeight;
-  const candidates = lines.map((l, i) => ({
-    ...l,
-    move: l.pv[0],
-    cp: cps[i],
-    loss: losses[i],
-    accuracy: moveAccuracy(losses[i]),
-    prob: weights[i] / total,
-  }));
-  const otherProb = otherWeight / total;
-  const expectedAccuracy = candidates.reduce((a, c) => a + c.prob * c.accuracy, 0)
-    + otherProb * moveAccuracy(unlistedLoss);
-  return { candidates, otherProb, expectedAccuracy };
+  const bestWin = lines.length ? Math.max(...wins) : 50;
+  const bestCp = lines.length ? Math.max(...cps) : 0;
+  const lossOf = new Map(lines.map((l, i) => [l.pv[0], bestWin - wins[i]]));
+  const cpOf = new Map(lines.map((l, i) => [l.pv[0], cps[i]]));
+  const worstListed = lines.length ? Math.max(...lossOf.values()) : 0;
+
+  const uniform = 1 / legalUci.length;
+  const human = legalUci.map((m) => (prior ? prior.get(m) ?? 0 : uniform));
+  const loss = legalUci.map((m) => lossOf.get(m) ?? Math.max(UNLISTED_MIN_LOSS, worstListed));
+  const tieBreak = legalUci.map((m) => (cpOf.has(m) ? (bestCp - cpOf.get(m)) * 1e-4 : 0));
+  const tau = Math.max(model.tau, 1e-6);
+  const sound = loss.map((l, i) => Math.exp(-(l + tieBreak[i]) / tau));
+
+  const soundMass = human.reduce((a, p, i) => a + p * sound[i], 0);
+  const beta = Math.min(1, model.betaCap * Math.pow(Math.max(soundMass, 1e-9), model.kappa));
+  const weights = human.map((p, i) => {
+    const prior_ = model.alpha > 0 ? Math.pow(Math.max(p, 1e-9), model.alpha) : 1;
+    return prior_ * Math.pow(sound[i], beta);
+  });
+  const total = weights.reduce((a, b) => a + b, 0);
+
+  const candidates = legalUci.map((move, i) => {
+    const line = byMove.get(move);
+    return {
+      move,
+      ...(line || {}),
+      listed: !!line,
+      prob: weights[i] / total,
+      human: prior ? human[i] : null,
+      loss: loss[i],
+      accuracy: moveAccuracy(loss[i]),
+      cp: cpOf.get(move),
+    };
+  }).sort((a, b) => b.prob - a.prob);
+  const expectedAccuracy = candidates.reduce((a, c) => a + c.prob * c.accuracy, 0);
+  const humanAccuracy = prior ? human.reduce((a, p, i) => a + p * moveAccuracy(loss[i]), 0) : expectedAccuracy;
+  return { candidates, soundMass, beta, expectedAccuracy, humanAccuracy };
 }
 
-/**
- * Sample a move (UCI string) from weighted candidates. With probability
- * `otherProb` a random legal move outside the candidate list is chosen.
- */
-export function sampleMove(weighted, legalUci, rng = Math.random) {
-  const { candidates, otherProb } = weighted;
+/** Sample a move (UCI string) from blended candidates. */
+export function sampleMove(blended, rng = Math.random) {
   let x = rng();
-  for (const c of candidates) {
+  for (const c of blended.candidates) {
     if (x < c.prob) return c.move;
     x -= c.prob;
   }
-  const known = new Set(candidates.map((c) => c.move));
-  const others = legalUci.filter((m) => !known.has(m));
-  if (otherProb > 0 && others.length) return others[Math.floor(rng() * others.length)];
-  return candidates.length ? candidates[0].move : legalUci[0];
+  return blended.candidates[0].move;
 }
 
 export function materialOf(chess) {

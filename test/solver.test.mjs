@@ -1,58 +1,113 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  eloParams, weighCandidates, sampleMove, materialOutcome, describeOutcome, scoreToCp, formatScore,
-  candidatePool, winPct, moveAccuracy,
+  playerModel, searchBudget, blendMoves, sampleMove, materialOutcome, describeOutcome,
+  scoreToCp, formatScore, winPct, moveAccuracy,
 } from '../public/js/solver.js';
 import { parseInfo } from '../public/js/engine.js';
+import { OpeningBook } from '../public/js/book.js';
 
-const line = (move, score) => ({ pv: [move], score });
+// An engine line: first move + eval in centipawns (side to move's view).
+const line = (move, cp) => ({ pv: [move], score: typeof cp === 'object' ? cp : { cp } });
+const probOf = (blended, move) => blended.candidates.find((c) => c.move === move).prob;
+const uniform = (moves) => new Map(moves.map((m) => [m, 1 / moves.length]));
 
-test('stronger Elo means deeper search and a colder temperature', () => {
-  const weak = eloParams(400);
-  const strong = eloParams(2800);
-  assert.ok(strong.depth > weak.depth);
-  assert.ok(strong.tau < weak.tau);
-  assert.equal(eloParams(0).depth, 1);
-  assert.equal(eloParams(3000).depth, 18);
-  assert.equal(eloParams(1500, { depth: 12 }).depth, 12);
-  assert.equal(eloParams(1500, { randomness: 0 }).tau, 0);
-  // Temperature is monotone in Elo.
-  for (let e = 0; e < 3000; e += 50) assert.ok(eloParams(e).tau >= eloParams(e + 50).tau);
-});
-
-test('candidate pool covers every legal move at low Elo', () => {
-  assert.equal(candidatePool(eloParams(300), 34, 0), 34);
-  assert.equal(candidatePool(eloParams(2900), 34, 0), 10);
-  assert.equal(candidatePool(eloParams(300), 34, 5), 5);
-});
-
-test('probabilities sum to 1 and favour the best move more at high Elo', () => {
-  const lines = [line('e2e4', { cp: 30 }), line('d2d4', { cp: 20 }), line('a2a3', { cp: -80 })];
-  const weak = weighCandidates(lines, 20, eloParams(400));
-  const strong = weighCandidates(lines, 20, eloParams(2800));
-  for (const w of [weak, strong]) {
-    const total = w.candidates.reduce((s, c) => s + c.prob, 0) + w.otherProb;
-    assert.ok(Math.abs(total - 1) < 1e-9);
+test('model parameters move monotonically with Elo', () => {
+  let prev = playerModel(0);
+  for (let e = 50; e <= 3000; e += 50) {
+    const m = playerModel(e);
+    assert.ok(m.betaCap >= prev.betaCap - 1e-9, `betaCap not monotone at ${e}`);
+    assert.ok(m.tau <= prev.tau + 1e-9, `tau not monotone at ${e}`);
+    prev = m;
   }
-  assert.ok(strong.candidates[0].prob > weak.candidates[0].prob);
-  assert.ok(weak.candidates[2].prob > strong.candidates[2].prob);
-  assert.ok(strong.expectedAccuracy > weak.expectedAccuracy);
+  assert.equal(playerModel(1500).alpha, 1);          // Maia-2's trained range is used as is
+  assert.ok(playerModel(300).alpha < 1);              // flattened below it
+  assert.ok(playerModel(2900).alpha < 0.5);           // prior fades out above it
+  assert.ok(playerModel(1500, { humanness: 2 }).betaCap < playerModel(1500).betaCap);
 });
 
-test('a low-rated player hangs a queen far more often than a strong one', () => {
-  const lines = [line('e2e4', { cp: 20 }), line('d1h5', { cp: -850 })];
-  const weak = weighCandidates(lines, 2, eloParams(100));
-  const strong = weighCandidates(lines, 2, eloParams(2000));
-  assert.ok(weak.candidates[1].prob > 0.05, `weak hang prob ${weak.candidates[1].prob}`);
-  assert.ok(strong.candidates[1].prob < 1e-6);
+test('search budget grows with Elo and covers every legal move for weaker levels', () => {
+  assert.equal(searchBudget(1200, 33).multipv, 33);
+  assert.ok(searchBudget(2900, 33).multipv < 33);
+  assert.ok(searchBudget(2900, 33).depth > searchBudget(1200, 33).depth);
+  assert.equal(searchBudget(1200, 5).multipv, 5);
 });
 
-test('randomness 0 always plays the top move', () => {
-  const lines = [line('e2e4', { cp: 30 }), line('d2d4', { cp: 29 })];
-  const w = weighCandidates(lines, 20, eloParams(0, { randomness: 0 }));
-  assert.equal(w.candidates[0].prob, 1);
-  assert.equal(w.otherProb, 0);
+test('probabilities sum to one and unscored moves are still candidates', () => {
+  const legal = ['e2e4', 'd2d4', 'a2a3', 'h2h4'];
+  const lines = [line('e2e4', 30), line('d2d4', 20), line('a2a3', -80)];
+  const b = blendMoves(lines, uniform(legal), legal, playerModel(1500));
+  assert.equal(b.candidates.length, 4);
+  assert.ok(Math.abs(b.candidates.reduce((s, c) => s + c.prob, 0) - 1) < 1e-9);
+  assert.equal(b.candidates.find((c) => c.move === 'h2h4').listed, false);
+  assert.deepEqual(b.candidates.map((c) => c.prob), [...b.candidates.map((c) => c.prob)].sort((x, y) => y - x));
+});
+
+test('stockfish vetoes a move humans like but that loses a queen, when sound moves are easy to find', () => {
+  const legal = ['e2e4', 'd2d4', 'd1h5'];
+  const lines = [line('e2e4', 20), line('d2d4', 10), line('d1h5', -900)];
+  const prior = new Map([['e2e4', 0.5], ['d2d4', 0.35], ['d1h5', 0.15]]);
+  const b = blendMoves(lines, prior, legal, playerModel(1800));
+  assert.ok(b.soundMass > 0.6, `sound mass ${b.soundMass}`);
+  assert.ok(probOf(b, 'd1h5') < 0.01, `queen hang prob ${probOf(b, 'd1h5')}`);
+});
+
+test('where the sound moves are ones humans rarely find, the human mistake wins out', () => {
+  // Only Nf7+ keeps the position; a typical player plays the natural-looking Bxh7 instead.
+  const legal = ['g5f7', 'c1h6', 'd3h7'];
+  const lines = [line('g5f7', 300), line('c1h6', -200), line('d3h7', -250)];
+  const prior = new Map([['g5f7', 0.04], ['c1h6', 0.26], ['d3h7', 0.70]]);
+  const b = blendMoves(lines, prior, legal, playerModel(1400));
+  assert.ok(b.soundMass < 0.1, `sound mass ${b.soundMass}`);
+  assert.ok(b.beta < 0.1, `beta ${b.beta}`);
+  assert.ok(probOf(b, 'd3h7') > 0.5, `human move prob ${probOf(b, 'd3h7')}`);
+  // ...whereas the same position at engine strength finds the only good move.
+  const strong = blendMoves(lines, prior, legal, playerModel(3000));
+  assert.ok(probOf(strong, 'g5f7') > 0.95);
+});
+
+test('errors cluster where sound moves are hard: expected accuracy is lower in the hard position', () => {
+  const easy = blendMoves(
+    [line('a', 50), line('b', 40), line('c', -400)],
+    new Map([['a', 0.55], ['b', 0.35], ['c', 0.10]]), ['a', 'b', 'c'], playerModel(1500));
+  const hard = blendMoves(
+    [line('a', 300), line('b', -250), line('c', -400)],
+    new Map([['a', 0.05], ['b', 0.55], ['c', 0.40]]), ['a', 'b', 'c'], playerModel(1500));
+  assert.ok(easy.expectedAccuracy > hard.expectedAccuracy + 20);
+});
+
+test('stronger Elo plays the engine move more often than a weaker one on the same data', () => {
+  const legal = ['a', 'b', 'c'];
+  const lines = [line('a', 100), line('b', 20), line('c', -60)];
+  const prior = new Map([['a', 0.3], ['b', 0.45], ['c', 0.25]]);
+  const p = (elo) => probOf(blendMoves(lines, prior, legal, playerModel(elo)), 'a');
+  assert.ok(p(300) < p(1500) && p(1500) < p(2500) && p(2500) < p(3000), [300, 1500, 2500, 3000].map(p).join(' < '));
+  assert.ok(p(3000) > 0.95);
+});
+
+test('engine-only fallback (no human prior) still prefers better moves and sums to one', () => {
+  const legal = ['a', 'b', 'c'];
+  const lines = [line('a', 100), line('b', 20), line('c', -300)];
+  const b = blendMoves(lines, null, legal, playerModel(1200, { maia: false }));
+  assert.ok(Math.abs(b.candidates.reduce((s, c) => s + c.prob, 0) - 1) < 1e-9);
+  assert.equal(b.candidates[0].move, 'a');
+  assert.ok(b.candidates.every((c) => c.human === null));
+});
+
+test('humanness above 1 gives human slips more room', () => {
+  const legal = ['a', 'b'];
+  const lines = [line('a', 100), line('b', -300)];
+  const prior = new Map([['a', 0.7], ['b', 0.3]]);
+  const lo = probOf(blendMoves(lines, prior, legal, playerModel(1500, { humanness: 0.5 })), 'b');
+  const hi = probOf(blendMoves(lines, prior, legal, playerModel(1500, { humanness: 2 })), 'b');
+  assert.ok(hi > lo, `${lo} -> ${hi}`);
+});
+
+test('sampleMove follows the blended probabilities', () => {
+  const blended = { candidates: [{ move: 'a', prob: 0.7 }, { move: 'b', prob: 0.2 }, { move: 'c', prob: 0.1 }] };
+  assert.equal(sampleMove(blended, () => 0.1), 'a');
+  assert.equal(sampleMove(blended, () => 0.8), 'b');
+  assert.equal(sampleMove(blended, () => 0.95), 'c');
 });
 
 test('win percentage and move accuracy follow the Lichess curves', () => {
@@ -63,21 +118,24 @@ test('win percentage and move accuracy follow the Lichess curves', () => {
   assert.ok(moveAccuracy(20) < 45);
 });
 
+test('opening book: known positions give a prior, unknown ones do not', () => {
+  const book = new OpeningBook({
+    'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -': { e2e4: 6, d2d4: 5, g1f3: 3 },
+  });
+  const legal = ['e2e4', 'd2d4', 'g1f3', 'a2a3'];
+  const p = book.prior('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', legal);
+  assert.ok(p.get('e2e4') > p.get('d2d4') && p.get('d2d4') > p.get('g1f3') && p.get('g1f3') > p.get('a2a3'));
+  assert.ok(p.get('a2a3') > 0, 'off-book moves keep a small chance');
+  assert.ok(Math.abs([...p.values()].reduce((a, b) => a + b, 0) - 1) < 1e-9);
+  assert.equal(book.prior('4k3/8/8/8/8/8/8/4K3 w - - 0 1', ['e1e2']), null);
+});
+
 test('mate scores dominate centipawn scores', () => {
   assert.ok(scoreToCp({ mate: 3 }) > scoreToCp({ cp: 2000 }));
   assert.ok(scoreToCp({ mate: 1 }) > scoreToCp({ mate: 5 }));
   assert.ok(scoreToCp({ mate: -2 }) < scoreToCp({ cp: -2000 }));
   assert.equal(formatScore({ cp: -150 }), '−1.50');
   assert.equal(formatScore({ mate: 2 }, -1), '−M2');
-});
-
-test('sampleMove follows the weights', () => {
-  const w = { candidates: [{ move: 'e2e4', prob: 0.7 }, { move: 'd2d4', prob: 0.2 }], otherProb: 0.1 };
-  const legal = ['e2e4', 'd2d4', 'g1f3'];
-  assert.equal(sampleMove(w, legal, () => 0.1), 'e2e4');
-  assert.equal(sampleMove(w, legal, () => 0.8), 'd2d4');
-  let calls = 0;
-  assert.equal(sampleMove(w, legal, () => (calls++ === 0 ? 0.95 : 0)), 'g1f3');
 });
 
 test('materialOutcome counts captures along the line and finishes exchanges', () => {
