@@ -9,7 +9,7 @@
 //   node tools/calibrate.mjs [--elo 1100,1500,1900] [--games 8]
 //        [--mode blend|maia|engine]  blend = the real solver, maia = raw Maia-2
 //                                    sampling, engine = Stockfish-only fallback
-//        [--beta-cap 0.8] [--tau 6] [--humanness 1]   override the model
+//        [--beta-cap 0.3] [--tau 6] [--alpha 1] [--humanness 1]   override the model
 //        [--depth 10] [--plies 80] [--review-depth 12] [--jobs 4]
 import os from 'node:os';
 import fs from 'node:fs/promises';
@@ -48,6 +48,7 @@ function modelFor(elo) {
   if (MODE === 'maia') Object.assign(m, { alpha: 1, betaCap: 0 });
   if (num('beta-cap') !== undefined && MODE === 'blend') m.betaCap = num('beta-cap');
   if (num('tau') !== undefined) m.tau = num('tau');
+  if (num('alpha') !== undefined && MODE === 'blend') m.alpha = num('alpha');
   return m;
 }
 
@@ -67,46 +68,68 @@ async function playGame(engine, elo) {
   return chess;
 }
 
-/** Per-move win-% loss for both sides, judged by a full-strength engine. */
+const CLASSES = [['best', 0.5], ['excellent', 2], ['good', 5], ['inaccuracy', 10], ['mistake', 20], ['blunder', Infinity]];
+const classOf = (loss) => CLASSES.find(([, max]) => loss < max)[0];
+
+/**
+ * Review a finished game with a full-strength engine. Per move: win-% lost (chess.com-style
+ * classes derive from it), whether the position had a standout "only move" (best beats the
+ * runner-up by >= 10 points) and whether it was found, and whether the opponent had just
+ * blundered (>= 15 points) and the reply punished it (kept all but 5 points of the swing).
+ */
 async function review(engine, chess) {
   const replay = new Chess();
   const fens = [replay.fen()];
   for (const m of chess.history()) { replay.move(m); fens.push(replay.fen()); }
-  const wp = []; // white-POV win%
+  const wp = []; // white-POV win% of the best move
+  const gap = []; // best minus second-best win% (side to move)
   for (const fen of fens) {
     const g = new Chess(fen);
     let w;
+    let d = 0;
     if (g.isCheckmate()) w = g.turn() === 'w' ? 0 : 100;
     else if (g.isGameOver()) w = 50;
     else {
-      const [best] = await engine.analyse(fen, { depth: REVIEW_DEPTH });
-      w = solver.winPct(best.score);
+      const lines = await engine.analyse(fen, { depth: REVIEW_DEPTH, multipv: 2 });
+      w = solver.winPct(lines[0].score);
+      if (lines[1]) d = w - solver.winPct(lines[1].score);
       if (g.turn() === 'b') w = 100 - w;
     }
     wp.push(w);
+    gap.push(d);
   }
-  const losses = { w: [], b: [] };
+  const sides = { w: [], b: [] };
   for (let i = 0; i < wp.length - 1; i++) {
     const color = i % 2 === 0 ? 'w' : 'b';
-    losses[color].push(Math.max(0, color === 'w' ? wp[i] - wp[i + 1] : wp[i + 1] - wp[i]));
+    const loss = Math.max(0, color === 'w' ? wp[i] - wp[i + 1] : wp[i + 1] - wp[i]);
+    // what the previous (opponent's) move cost its maker
+    const prevLoss = i === 0 ? 0 : Math.max(0, color === 'w' ? wp[i] - wp[i - 1] : wp[i - 1] - wp[i]);
+    sides[color].push({ loss, shot: gap[i] >= 10, blunderBefore: prevLoss >= 15 });
   }
-  return [losses.w, losses.b].filter((l) => l.length);
+  return [sides.w, sides.b].filter((l) => l.length);
 }
 
 const jobs = ELOS.flatMap((elo) => Array.from({ length: GAMES }, () => elo));
-const results = Object.fromEntries(ELOS.map((e) => [e, { moveAcc: [], blunders: [], moves: 0, plies: [] }]));
+const results = Object.fromEntries(ELOS.map((e) => [e, {
+  moveAcc: [], moves: 0, classes: {}, shots: 0, shotsFound: 0, chances: 0, punished: 0, plies: [],
+}]));
 await Promise.all(Array.from({ length: JOBS }, async () => {
   const engine = await new NodeEngine().init();
   for (let job; (job = jobs.shift()) !== undefined;) {
     engine.send('ucinewgame');
     const game = await playGame(engine, job);
-    for (const losses of await review(engine, game)) {
-      const r = results[job];
-      r.moveAcc.push(losses.reduce((a, l) => a + solver.moveAccuracy(l), 0) / losses.length);
-      r.blunders.push(losses.filter((l) => l >= 20).length / losses.length);
-      r.moves += losses.length;
+    const r = results[job];
+    for (const moves of await review(engine, game)) {
+      r.moveAcc.push(moves.reduce((a, m) => a + solver.moveAccuracy(m.loss), 0) / moves.length);
+      for (const m of moves) {
+        const c = classOf(m.loss);
+        r.classes[c] = (r.classes[c] || 0) + 1;
+        if (m.shot) { r.shots++; if (m.loss < 2) r.shotsFound++; }
+        if (m.blunderBefore) { r.chances++; if (m.loss < 5) r.punished++; }
+      }
+      r.moves += moves.length;
     }
-    results[job].plies.push(game.history().length);
+    r.plies.push(game.history().length);
     process.stderr.write('.');
   }
   engine.quit();
@@ -118,12 +141,13 @@ const stats = (a) => {
   const sd = Math.sqrt(a.reduce((x, y) => x + (y - mean) ** 2, 0) / a.length);
   return [mean, sd];
 };
-const overrides = ['beta-cap', 'tau', 'humanness', 'depth'].filter((k) => args[k] !== undefined).map((k) => `${k}=${args[k]}`).join(' ');
+const overrides = ['beta-cap', 'tau', 'alpha', 'humanness', 'depth'].filter((k) => args[k] !== undefined).map((k) => `${k}=${args[k]}`).join(' ');
 console.log(`mode ${MODE}${overrides ? ` (${overrides})` : ''}, ${GAMES} games/level, ≤${MAX_PLIES} plies, review depth ${REVIEW_DEPTH}`);
-console.log('  Elo | move accuracy (mean ± sd per game) | blunders per 100 moves');
+const pc = (x, n) => (n ? ((100 * x) / n).toFixed(0) : '-').padStart(3);
+console.log('  Elo | acc (mean±sd) | best exc good inac mist blun (% of moves) | only-move found | blunder punished');
 for (const elo of ELOS) {
   const r = results[elo];
   const [m, sd] = stats(r.moveAcc);
-  const [b] = stats(r.blunders);
-  console.log(`${String(elo).padStart(5)} | ${m.toFixed(1).padStart(6)} ± ${sd.toFixed(1).padEnd(5)}                  | ${(b * 100).toFixed(1).padStart(5)}`);
+  const cls = CLASSES.map(([name]) => `${pc(r.classes[name] || 0, r.moves)} `).join(' ');
+  console.log(`${String(elo).padStart(5)} | ${m.toFixed(1).padStart(5)} ± ${sd.toFixed(1).padEnd(4)} | ${cls}              | ${pc(r.shotsFound, r.shots)}% (n=${r.shots})    | ${pc(r.punished, r.chances)}% (n=${r.chances})`);
 }

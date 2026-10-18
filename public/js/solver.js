@@ -48,11 +48,14 @@ export function eloBand(elo) {
 // engine's veto weakened (more, and more random, mistakes); above 2000 the prior
 // fades out and the engine's veto tightens until, near 3000, it plays the top
 // engine moves. tools/calibrate.mjs measures the resulting self-play accuracy.
+// betaCap (how strictly Stockfish vetoes unsound moves) is deliberately low inside
+// Maia's range: with 0.6-0.8 the blend erased the human blunders (1.4 per 100 moves at
+// 1100 vs Maia's 8.1); at 0.2-0.45 it keeps most of them and only prunes the worst.
 const ANCHORS = {
   elo:     [0,    500,  1000, 1500, 2000, 2500, 3000],
   alpha:   [0.35, 0.6,  0.95, 1,    1,    0.6,  0.2],
   tau:     [8,    8,    7,    6,    5,    2,    0.5],   // win-% points
-  betaCap: [0,    0.3,  0.6,  0.8,  1,    1,    1],
+  betaCap: [0,    0.1,  0.2,  0.3,  0.45, 0.9,  1],
   kappa:   [1,    1,    1,    1,    1,    0.4,  0],
 };
 
