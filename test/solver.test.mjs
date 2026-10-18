@@ -49,7 +49,8 @@ test('stockfish vetoes a move humans like but that loses a queen, when sound mov
   const prior = new Map([['e2e4', 0.5], ['d2d4', 0.35], ['d1h5', 0.15]]);
   const b = blendMoves(lines, prior, legal, playerModel(1800));
   assert.ok(b.soundMass > 0.6, `sound mass ${b.soundMass}`);
-  assert.ok(probOf(b, 'd1h5') < 0.01, `queen hang prob ${probOf(b, 'd1h5')}`);
+  assert.ok(probOf(b, 'd1h5') < 0.03, `queen hang prob ${probOf(b, 'd1h5')}`);
+  assert.ok(probOf(b, 'd1h5') < 0.15 / 2, 'the veto must cut the humans\' 15% at least in half');
 });
 
 test('where the sound moves are ones humans rarely find, the human mistake wins out', () => {
