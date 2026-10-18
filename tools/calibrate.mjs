@@ -9,7 +9,7 @@
 //   node tools/calibrate.mjs [--elo 1100,1500,1900] [--games 8]
 //        [--mode blend|maia|engine]  blend = the real solver, maia = raw Maia-2
 //                                    sampling, engine = Stockfish-only fallback
-//        [--beta-cap 0.8] [--tau 6] [--humanness 1]   override the model
+//        [--beta-cap 0.3] [--tau 6] [--alpha 1] [--humanness 1]   override the model
 //        [--depth 10] [--plies 80] [--review-depth 12] [--jobs 4]
 import os from 'node:os';
 import fs from 'node:fs/promises';
@@ -48,6 +48,7 @@ function modelFor(elo) {
   if (MODE === 'maia') Object.assign(m, { alpha: 1, betaCap: 0 });
   if (num('beta-cap') !== undefined && MODE === 'blend') m.betaCap = num('beta-cap');
   if (num('tau') !== undefined) m.tau = num('tau');
+  if (num('alpha') !== undefined && MODE === 'blend') m.alpha = num('alpha');
   return m;
 }
 
@@ -118,7 +119,7 @@ const stats = (a) => {
   const sd = Math.sqrt(a.reduce((x, y) => x + (y - mean) ** 2, 0) / a.length);
   return [mean, sd];
 };
-const overrides = ['beta-cap', 'tau', 'humanness', 'depth'].filter((k) => args[k] !== undefined).map((k) => `${k}=${args[k]}`).join(' ');
+const overrides = ['beta-cap', 'tau', 'alpha', 'humanness', 'depth'].filter((k) => args[k] !== undefined).map((k) => `${k}=${args[k]}`).join(' ');
 console.log(`mode ${MODE}${overrides ? ` (${overrides})` : ''}, ${GAMES} games/level, ≤${MAX_PLIES} plies, review depth ${REVIEW_DEPTH}`);
 console.log('  Elo | move accuracy (mean ± sd per game) | blunders per 100 moves');
 for (const elo of ELOS) {
