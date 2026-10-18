@@ -43,24 +43,25 @@ export function eloBand(elo) {
 
 // ───────────────────────── per-Elo parameters ─────────────────────────
 // Maia-2 was trained on rated Lichess games and only distinguishes ratings from
-// "<1100" to ">=2000". Between 1100 and 2000 it is used as is. Outside that range
-// the curves below extrapolate: below 1100 the human prior is flattened and the
-// engine's veto weakened (more, and more random, mistakes); above 2000 the prior
-// fades out and the engine's veto tightens until, near 3000, it plays the top
-// engine moves. tools/calibrate.mjs measures the resulting self-play accuracy.
-// betaCap (how strictly Stockfish vetoes unsound moves) is deliberately low inside
-// Maia's range: with 0.6-0.8 the blend erased the human blunders (1.4 per 100 moves at
-// 1100 vs Maia's 8.1); at 0.2-0.45 it keeps most of them and only prunes the worst.
+// "<1100" to ">=2000". Between 1100 and 2000 it is the human prior, used as is, with
+// a light engine veto on top. Outside that range the curves extrapolate:
+//   below ~1000  the human prior fades (alpha) and the engine speaks instead, but through a
+//                WIDE softmax (tau 10-28 win-% points, beta 1): moves within a few points of
+//                the best are all about equally likely, so the best move is rarely favoured,
+//                and a standout tactic (everything else loses 30 points) is only found part
+//                of the time, as is the punishment of an opponent's blunder;
+//   above 2000   the prior fades out and the veto tightens until, near 3000, the top
+//                engine moves are played.
+// tools/calibrate.mjs and tools/match.mjs measure what these settings actually produce.
 const ANCHORS = {
-  elo:     [0,    500,  1000, 1500, 2000, 2500, 3000],
-  alpha:   [0.35, 0.6,  0.95, 1,    1,    0.6,  0.2],
-  tau:     [8,    8,    7,    6,    5,    2,    0.5],   // win-% points
-  betaCap: [0,    0.1,  0.2,  0.3,  0.45, 0.9,  1],
-  kappa:   [1,    1,    1,    1,    1,    0.4,  0],
+  elo:     [0,    250,  500,  800,  1100, 1500, 2000, 2500, 3000],
+  alpha:   [0.2,  0.25, 0.35, 0.6,  1,    1,    1,    0.6,  0.2],
+  tau:     [28,   22,   16,   10,   7,    6,    5,    2,    0.5],   // win-% points
+  betaCap: [1,    1,    1,    0.6,  0.25, 0.3,  0.45, 0.9,  1],
+  kappa:   [0,    0,    0,    0.5,  1,    1,    1,    0.4,  0],
 };
 
-function interpolate(ys, elo, log = false) {
-  const xs = ANCHORS.elo;
+function interpolate(xs, ys, elo, log = false) {
   if (elo <= xs[0]) return ys[0];
   for (let i = 1; i < xs.length; i++) {
     if (elo <= xs[i]) {
@@ -72,10 +73,11 @@ function interpolate(ys, elo, log = false) {
   }
   return ys[ys.length - 1];
 }
+const at = (key, elo, log = false) => interpolate(ANCHORS.elo, ANCHORS[key], elo, log);
 
 // Engine-only fallback (Maia-2 not available): softmax over win-% loss. These
 // temperatures come from the earlier self-play calibration of that model.
-const ENGINE_ONLY_TAU = [150, 80, 25, 12, 4.5, 2.5, 0.7];
+const ENGINE_ONLY = { elo: [0, 500, 1000, 1500, 2000, 2500, 3000], tau: [150, 80, 25, 12, 4.5, 2.5, 0.7] };
 
 /**
  * Everything derived from one number, the Elo. `humanness` (advanced, default 1)
@@ -88,13 +90,13 @@ export function playerModel(elo, { humanness = 1, maia = true } = {}) {
   const m = {
     elo: e,
     maia,
-    alpha: interpolate(ANCHORS.alpha, e),
-    tau: interpolate(ANCHORS.tau, e, true),
-    betaCap: Math.min(1, interpolate(ANCHORS.betaCap, e) / h),
-    kappa: interpolate(ANCHORS.kappa, e),
+    alpha: at('alpha', e),
+    tau: at('tau', e, true),
+    betaCap: Math.min(1, at('betaCap', e) / h),
+    kappa: at('kappa', e),
   };
   if (!maia) {
-    Object.assign(m, { alpha: 0, tau: interpolate(ENGINE_ONLY_TAU, e, true) * h, betaCap: 1, kappa: 0 });
+    Object.assign(m, { alpha: 0, tau: interpolate(ENGINE_ONLY.elo, ENGINE_ONLY.tau, e, true) * h, betaCap: 1, kappa: 0 });
   }
   return m;
 }

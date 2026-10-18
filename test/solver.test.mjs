@@ -12,17 +12,23 @@ const line = (move, cp) => ({ pv: [move], score: typeof cp === 'object' ? cp : {
 const probOf = (blended, move) => blended.candidates.find((c) => c.move === move).prob;
 const uniform = (moves) => new Map(moves.map((m) => [m, 1 / moves.length]));
 
-test('model parameters move monotonically with Elo', () => {
+test('model regimes: engine softmax at the bottom, Maia in the middle, engine again at the top', () => {
+  // the temperature (how forgiving of costly moves) only ever falls as Elo rises
   let prev = playerModel(0);
   for (let e = 50; e <= 3000; e += 50) {
     const m = playerModel(e);
-    assert.ok(m.betaCap >= prev.betaCap - 1e-9, `betaCap not monotone at ${e}`);
     assert.ok(m.tau <= prev.tau + 1e-9, `tau not monotone at ${e}`);
     prev = m;
   }
-  assert.equal(playerModel(1500).alpha, 1);          // Maia-2's trained range is used as is
-  assert.ok(playerModel(300).alpha < 1);              // flattened below it
-  assert.ok(playerModel(2900).alpha < 0.5);           // prior fades out above it
+  for (const e of [100, 300, 500]) {                      // below Maia's range: wide softmax, weak prior
+    const m = playerModel(e);
+    assert.ok(m.betaCap === 1 && m.tau >= 15 && m.alpha < 0.5, `low regime at ${e}`);
+  }
+  for (const e of [1100, 1500, 2000]) {                   // Maia's range: prior as is, light veto
+    const m = playerModel(e);
+    assert.ok(m.alpha === 1 && m.betaCap <= 0.5, `maia regime at ${e}`);
+  }
+  assert.ok(playerModel(2900).alpha < 0.5 && playerModel(2900).betaCap > 0.9);
   assert.ok(playerModel(1500, { humanness: 2 }).betaCap < playerModel(1500).betaCap);
 });
 
@@ -77,13 +83,29 @@ test('errors cluster where sound moves are hard: expected accuracy is lower in t
   assert.ok(easy.expectedAccuracy > hard.expectedAccuracy + 20);
 });
 
-test('stronger Elo plays the engine move more often than a weaker one on the same data', () => {
-  const legal = ['a', 'b', 'c'];
-  const lines = [line('a', 100), line('b', 20), line('c', -60)];
-  const prior = new Map([['a', 0.3], ['b', 0.45], ['c', 0.25]]);
+test('the engine move is near-certain at the top and not at the bottom', () => {
+  const legal = ['a', 'b', 'c', 'd'];
+  const lines = [line('a', 100), line('b', 20), line('c', -60), line('d', -10)];
+  const prior = new Map([['a', 0.3], ['b', 0.4], ['c', 0.1], ['d', 0.2]]);
   const p = (elo) => probOf(blendMoves(lines, prior, legal, playerModel(elo)), 'a');
-  assert.ok(p(300) < p(1500) && p(1500) < p(2500) && p(2500) < p(3000), [300, 1500, 2500, 3000].map(p).join(' < '));
-  assert.ok(p(3000) > 0.95);
+  assert.ok(p(3000) > 0.95, `p(3000)=${p(3000)}`);
+  assert.ok(p(2500) > p(1500), `${p(1500)} -> ${p(2500)}`);
+  assert.ok(p(100) < 0.6, `p(100)=${p(100)}`);
+});
+
+test('a wide softmax (low Elo) finds a standout tactic less often and rarely favours the top move', () => {
+  const moves = ['best', ...Array.from({ length: 24 }, (_, i) => `m${i}`)];
+  const uniformPrior = new Map(moves.map((m) => [m, 1 / moves.length]));
+  // standout tactic: the best move keeps +3.00, everything else drops to about 0.
+  const shot = [line('best', 300), ...moves.slice(1).map((m) => line(m, 0))];
+  const found = (elo) => probOf(blendMoves(shot, uniformPrior, moves, playerModel(elo)), 'best');
+  assert.ok(found(100) < 0.35, `100 Elo finds it ${found(100)}`);
+  assert.ok(found(100) < found(500) && found(500) < found(2500), [100, 500, 2500].map(found).join(' < '));
+  assert.ok(found(3000) > 0.9);
+  // quiet position: ten near-equal moves; the best should barely be favoured at 100 Elo
+  const quiet = moves.map((m, i) => line(m, i === 0 ? 10 : 8 - (i % 3)));
+  const top = probOf(blendMoves(quiet, uniformPrior, moves, playerModel(100)), 'best');
+  assert.ok(top < 2 / moves.length, `top move share ${top} vs uniform ${1 / moves.length}`);
 });
 
 test('engine-only fallback (no human prior) still prefers better moves and sums to one', () => {
