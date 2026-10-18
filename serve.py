@@ -8,7 +8,8 @@ ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "public")
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map,
-                      ".wasm": "application/wasm", ".js": "text/javascript",
+                      ".wasm": "application/wasm", ".js": "text/javascript", ".mjs": "text/javascript",
+                      ".onnx": "application/octet-stream",
                       ".svg": "image/svg+xml", ".css": "text/css"}
     def end_headers(self):
         self.send_header("Cache-Control", "no-cache")

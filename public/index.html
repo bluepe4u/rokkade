@@ -46,7 +46,7 @@
             </div>
           </div>
           <label class="field">
-            <span class="field-row"><span>Solver Elo</span><output class="mono" data-out="elo"></output></span>
+            <span class="field-row"><span>Elo</span><output class="mono" data-out="elo"></output></span>
             <input type="range" min="0" max="3000" step="25" data-input="elo" />
             <span class="field-hint" data-out="band"></span>
           </label>
@@ -61,13 +61,13 @@
             </div>
           </div>
           <label class="field">
-            <span class="field-row"><span>Solver Elo</span><output class="mono" data-out="elo"></output></span>
+            <span class="field-row"><span>Elo</span><output class="mono" data-out="elo"></output></span>
             <input type="range" min="0" max="3000" step="25" data-input="elo" />
             <span class="field-hint" data-out="band"></span>
           </label>
         </div>
         <div class="presets">
-          <span class="presets-label">Quick Elo</span>
+          <span class="presets-label">Both sides</span>
           <button class="chip" data-preset="400">400</button>
           <button class="chip" data-preset="1200">1200</button>
           <button class="chip" data-preset="1800">1800</button>
@@ -82,34 +82,15 @@
           <span class="field-row"><span>Best moves shown (n)</span><output class="mono" id="outN"></output></span>
           <input type="range" min="1" max="8" step="1" id="inN" />
         </label>
-        <label class="field">
-          <span class="field-row"><span>Candidate pool (MultiPV)</span><output class="mono" id="outPool"></output></span>
-          <input type="range" min="0" max="12" step="1" id="inPool" />
-          <span class="field-hint">0 = score every legal move (needed for realistic low-Elo play)</span>
-        </label>
-        <label class="field">
-          <span class="field-row"><span>Search depth</span><output class="mono" id="outDepth"></output></span>
-          <input type="range" min="0" max="24" step="1" id="inDepth" />
-          <span class="field-hint">0 = derived from Elo</span>
-        </label>
-        <label class="field">
-          <span class="field-row"><span>Max think time</span><output class="mono" id="outTime"></output></span>
-          <input type="range" min="200" max="10000" step="100" id="inTime" />
-        </label>
-        <label class="field">
-          <span class="field-row"><span>Randomness</span><output class="mono" id="outRand"></output></span>
-          <input type="range" min="0" max="2" step="0.05" id="inRand" />
-          <span class="field-hint">Multiplies the Elo temperature. 0 = always the top move</span>
-        </label>
-        <label class="field">
-          <span class="field-row"><span>Material horizon</span><output class="mono" id="outHorizon"></output></span>
-          <input type="range" min="1" max="16" step="1" id="inHorizon" />
-          <span class="field-hint">Plies of each line played out to measure material</span>
-        </label>
-        <label class="field">
-          <span class="field-row"><span>Solver move delay</span><output class="mono" id="outDelay"></output></span>
-          <input type="range" min="0" max="3000" step="100" id="inDelay" />
-        </label>
+        <p class="auto-note">Search depth, thinking time and how human the play feels are set automatically from each side's Elo.</p>
+        <details class="advanced">
+          <summary>Advanced</summary>
+          <label class="field">
+            <span class="field-row"><span>Human slips</span><output class="mono" id="outHuman"></output></span>
+            <input type="range" min="0.5" max="2" step="0.05" id="inHuman" />
+            <span class="field-hint">Left: the engine vetoes bad moves more strictly. Right: Maia-2's human mistakes get more room.</span>
+          </label>
+        </details>
       </section>
 
       <section class="card">

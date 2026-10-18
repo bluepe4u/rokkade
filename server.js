@@ -15,6 +15,8 @@ const TYPES = {
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.wasm': 'application/wasm',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.onnx': 'application/octet-stream',
   '.json': 'application/json',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
@@ -35,16 +37,17 @@ const server = http.createServer((req, res) => {
     res.writeHead(403).end('Forbidden');
     return;
   }
-  fs.readFile(file, (err, data) => {
-    if (err) {
+  fs.stat(file, (err, st) => {
+    if (err || !st.isFile()) {
       res.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found');
       return;
     }
     res.writeHead(200, {
       'Content-Type': TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream',
+      'Content-Length': st.size,
       'Cache-Control': 'no-cache',
     });
-    res.end(data);
+    fs.createReadStream(file).on('error', () => res.destroy()).pipe(res);
   });
 });
 

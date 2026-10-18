@@ -446,3 +446,18 @@ input[type="range"]:focus-visible { outline: 2px solid var(--ring); outline-offs
   .evalbar { width: 14px; }
   .brand-name { font-size: 13px; }
 }
+
+/* ───── Maia-2 blend additions ───── */
+.auto-note { margin: 4px 0 12px; font-size: 12.5px; color: var(--muted-foreground); }
+.advanced { border-top: 1px solid var(--border); padding-top: 10px; }
+.advanced summary { cursor: pointer; font-weight: 500; color: var(--muted-foreground); font-size: 13px; margin-bottom: 10px; }
+.advanced[open] summary { color: var(--foreground); }
+.cand-meta { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted-foreground); }
+.cand-meta i { font-style: normal; margin-right: 3px; }
+.cand-meta b { color: var(--foreground); font-weight: 600; }
+.cand-meta .loss-ok b { color: var(--success); }
+.cand-meta .loss-meh b { color: var(--cta); }
+.cand-meta .loss-bad b { color: var(--destructive); }
+.mat-text.muted { color: var(--muted-foreground); }
+.kv.warn { color: var(--destructive); }
+.card-sub { line-height: 1.7; }

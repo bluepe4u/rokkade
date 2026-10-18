@@ -1,23 +1,24 @@
 import { Chess, DEFAULT_POSITION } from '../vendor/chess.js';
 import { Board } from './board.js';
 import { Engine } from './engine.js';
+import { Maia } from './maia.js';
+import { OpeningBook } from './book.js';
 import {
-  eloParams, eloBand, weighCandidates, sampleMove, materialOutcome, candidatePool,
+  playerModel, searchBudget, blendMoves, sampleMove, eloBand, materialOutcome,
   describeOutcome, formatScore, scoreToCp, uciToMove, materialOf,
 } from './solver.js';
 
 // ─────────────────────────── settings ───────────────────────────
-const STORE_KEY = 'sfet.settings.v2';
+const STORE_KEY = 'sfet.settings.v3';
+// Everything the solver needs (search depth, time, candidate pool, how human it is) is
+// derived from the Elo; `humanness` is the one advanced override.
+const MATERIAL_HORIZON = 6; // plies of each line played out (extended while captures continue)
+const SOLVER_DELAY = 700;   // ms pause before an automatic solver move
 const DEFAULTS = {
   ctrl: { w: 'human', b: 'solver' },
   elo: { w: 1500, b: 1500 },
   n: 3,
-  pool: 0,
-  depth: 0,
-  movetime: 2500,
-  randomness: 1,
-  horizon: 6,
-  delay: 600,
+  humanness: 1,
   arrows: true,
   hintsHuman: true,
   hintsSolver: true,
@@ -53,7 +54,7 @@ let startFen = DEFAULT_POSITION;
 let history = []; // [{ from, to, promotion, san, color, solver?: { prob, rank } }]
 let cursor = 0;
 let game = new Chess();
-let analysis = null; // { token, fen, color, params, lines, weighted, final }
+let analysis = null; // { token, fen, color, model, budget, legalUci, lines, prior, blended, final }
 let token = 0;
 let paused = false;
 let autoTimer = null;
@@ -70,27 +71,58 @@ const el = {
   toast: $('toast'), engineName: $('engineName'), engineDot: $('engineDot'), pause: $('btnPause'),
 };
 
-// ─────────────────────────── engine ───────────────────────────
+// ─────────────────────────── engines ───────────────────────────
 let engine = null;
+let maia = null; // Maia-2 (human move model); null while loading or if it failed to load
+let book = null; // opening prior for the first 10 plies (Maia-2 never trained on those)
+const status = { engine: 'Stockfish loading…', maia: 'Maia-2 loading…', state: 'loading' };
+
+function renderStatusBar() {
+  el.engineDot.dataset.state = status.state;
+  el.engineName.textContent = `${status.engine} · ${status.maia}`;
+}
+
 function bootEngine() {
   if (location.protocol === 'file:') {
-    engineStatus('error', 'Open via start.bat / node server.js — engines cannot load from file://');
+    status.state = 'error';
+    status.engine = 'Open via start.bat / node server.js — engines cannot load from file://';
+    status.maia = '';
+    renderStatusBar();
     return;
   }
   try {
     engine = new Engine('engine/stockfish-19-lite-single.js');
-    engine.worker.addEventListener('error', () => engineStatus('error', 'Engine failed to load'));
+    engine.worker.addEventListener('error', () => { status.state = 'error'; status.engine = 'Engine failed to load'; renderStatusBar(); });
     engine.ready.then((name) => {
-      engineStatus('ok', name);
+      status.engine = name;
+      if (status.state === 'loading') status.state = 'ok';
+      renderStatusBar();
       startAnalysis();
     });
   } catch (err) {
-    engineStatus('error', `Engine failed: ${err.message}`);
+    status.state = 'error';
+    status.engine = `Engine failed: ${err.message}`;
   }
+  renderStatusBar();
+  bootMaia();
 }
-function engineStatus(kind, text) {
-  el.engineDot.dataset.state = kind;
-  el.engineName.textContent = text;
+
+async function bootMaia() {
+  OpeningBook.load().then((b) => { book = b; startAnalysis(); }).catch((err) => console.warn('opening book unavailable', err));
+  try {
+    maia = await Maia.load({
+      onProgress: (f) => { status.maia = `Maia-2 ${Math.round(f * 100)}%`; renderStatusBar(); },
+    });
+    status.maia = 'Maia-2 blitz';
+    renderStatusBar();
+    startAnalysis(); // restart with the human model now available
+  } catch (err) {
+    console.error(err);
+    status.maia = 'Maia-2 unavailable (engine-only play)';
+    renderStatusBar();
+    toast('Maia-2 could not be loaded; the solver falls back to an engine-only Elo model.');
+    startAnalysis();
+  }
 }
 
 // ─────────────────────────── board ───────────────────────────
@@ -187,6 +219,8 @@ function positionChanged() {
 }
 
 // ─────────────────────────── analysis ───────────────────────────
+const toUci = (m) => m.from + m.to + (m.promotion || '');
+
 function startAnalysis() {
   const myToken = ++token;
   if (!engine || game.isGameOver()) {
@@ -196,37 +230,68 @@ function startAnalysis() {
     return;
   }
   const color = game.turn();
-  const params = eloParams(settings.elo[color], { randomness: settings.randomness, depth: settings.depth });
-  const legal = game.moves().length;
-  const multipv = Math.min(legal, Math.max(settings.n, candidatePool(params, legal, settings.pool)));
+  const oppColor = color === 'w' ? 'b' : 'w';
+  const elo = settings.elo[color];
+  const legalUci = game.moves({ verbose: true }).map(toUci);
   const fen = game.fen();
-  analysis = { token: myToken, fen, color, params, legal, lines: [], weighted: null, final: false };
+  const budget = searchBudget(elo, legalUci.length);
+  const bookPrior = book?.prior(fen, legalUci) ?? null;
+  const model = playerModel(elo, { humanness: settings.humanness, maia: !!maia || !!bookPrior });
+  analysis = {
+    token: myToken, fen, color, model, budget, legalUci, lines: [], blended: null, final: false,
+    prior: bookPrior, source: bookPrior ? 'opening book' : null,
+  };
   renderAnalysis();
+
+  // Maia-2 (what would a player of this Elo do?) and Stockfish (what does each move cost?) run side by side.
+  const priorReady = bookPrior
+    ? Promise.resolve()
+    : maia
+      ? maia.predict(fen, elo, settings.elo[oppColor], legalUci).then((r) => {
+        if (analysis?.token === myToken) { analysis.prior = r.probs; analysis.source = 'Maia-2'; if (analysis.lines.length) setLines(analysis.lines, false); }
+      }).catch((err) => {
+        console.error(err);
+        if (analysis?.token === myToken) analysis.model = playerModel(elo, { humanness: settings.humanness, maia: false });
+      })
+      : Promise.resolve();
   engine.analyse({
     fen,
-    multipv,
-    depth: params.depth,
-    movetime: settings.movetime,
+    multipv: Math.max(budget.multipv, Math.min(settings.n, legalUci.length)),
+    depth: budget.depth,
+    movetime: budget.movetime,
     onUpdate: (lines) => {
       if (analysis?.token !== myToken) return;
       setLines(lines, false);
     },
-  }).then((lines) => {
+  }).then(async (lines) => {
     if (!lines || analysis?.token !== myToken) return;
+    await priorReady;
+    if (analysis?.token !== myToken) return;
     setLines(lines, true);
     maybeAutoPlay();
   });
 }
 
 function setLines(lines, final) {
-  analysis.lines = lines;
-  analysis.final = final;
-  analysis.weighted = weighCandidates(lines, analysis.legal, analysis.params);
-  for (const c of analysis.weighted.candidates) {
-    c.outcome = materialOutcome(analysis.fen, c.pv, settings.horizon);
+  const a = analysis;
+  a.lines = lines;
+  a.final = final;
+  if (analysis.model.maia && !a.prior) { if (final) renderAnalysis(); return; } // wait for Maia so the first cards are already blended
+  a.blended = blendMoves(lines, a.prior, a.legalUci, a.model);
+  for (const c of a.blended.candidates.slice(0, settings.n)) {
+    if (c.pv && !c.outcome) c.outcome = materialOutcome(a.fen, c.pv, MATERIAL_HORIZON);
   }
   if (final) renderAnalysis();
   else queueRender();
+}
+
+/** Re-blend the current analysis after a setting change (no new search needed). */
+function reblend() {
+  const a = analysis;
+  if (!a) return;
+  a.model = playerModel(settings.elo[a.color], { humanness: settings.humanness, maia: !!a.prior });
+  if (a.lines.length) setLines(a.lines, a.final);
+  else renderAnalysis();
 }
 
 function queueRender() {
@@ -240,24 +305,21 @@ function maybeAutoPlay() {
   if (paused || cursor !== history.length || game.isGameOver()) return;
   if (settings.ctrl[game.turn()] !== 'solver') return;
   clearTimeout(autoTimer);
-  autoTimer = setTimeout(playSolverMove, settings.delay);
+  autoTimer = setTimeout(playSolverMove, SOLVER_DELAY);
 }
 
 function playSolverMove() {
   if (!analysis || game.isGameOver()) return;
-  if (!analysis.final) { solveRequested = true; return; }
+  if (!analysis.final || !analysis.blended) { solveRequested = true; return; }
   solveRequested = false;
-  const legal = game.moves({ verbose: true }).map((m) => m.from + m.to + (m.promotion || ''));
-  const uci = sampleMove(analysis.weighted, legal);
-  const idx = analysis.weighted.candidates.findIndex((c) => c.move === uci);
-  const prob = idx >= 0
-    ? analysis.weighted.candidates[idx].prob
-    : analysis.weighted.otherProb / Math.max(1, legal.length - analysis.weighted.candidates.length);
-  const meta = { prob, rank: idx >= 0 ? idx + 1 : null, elo: analysis.params.elo };
+  const uci = sampleMove(analysis.blended);
+  const rank = analysis.blended.candidates.findIndex((c) => c.move === uci);
+  const chosen = analysis.blended.candidates[rank];
+  const meta = { prob: chosen.prob, rank: rank + 1, elo: analysis.model.elo };
   const color = COLOR_NAME[game.turn()];
   if (playMove(uciToMove(uci), meta)) {
     const last = history[history.length - 1];
-    toast(`${color} solver (${meta.elo}) played ${last.san} — ${meta.rank ? `line #${meta.rank}` : 'off-list move'}, p=${pct(prob)}`);
+    toast(`${color} solver (${meta.elo}) played ${last.san} — choice #${meta.rank} of ${analysis.legalUci.length}, p=${pct(meta.prob)}`);
   }
 }
 
@@ -271,6 +333,10 @@ function pct(p) {
 function hintsVisible() {
   if (!analysis) return false;
   return settings.ctrl[analysis.color] === 'human' ? settings.hintsHuman : settings.hintsSolver;
+}
+
+function sanOf(fen, uci) {
+  try { return new Chess(fen).move(uciToMove(uci)).san; } catch { return uci; }
 }
 
 function renderAnalysis() {
@@ -287,7 +353,7 @@ function renderAnalysis() {
   }
   const last = a.lines[0];
   el.searchInfo.textContent = last
-    ? `${a.final ? 'depth' : 'searching'} ${last.depth}/${a.params.depth}${last.nps ? ` · ${Math.round(last.nps / 1000)} kN/s` : ''}`
+    ? `${a.final ? 'depth' : 'searching'} ${last.depth}/${a.budget.depth}${last.nps ? ` · ${Math.round(last.nps / 1000)} kN/s` : ''}`
     : 'thinking…';
   el.searchInfo.classList.toggle('live', !a.final);
 
@@ -296,9 +362,9 @@ function renderAnalysis() {
     board.setArrows([]);
     return;
   }
-  const shown = (a.weighted?.candidates || []).slice(0, settings.n);
+  const shown = (a.blended?.candidates || []).slice(0, settings.n);
   if (!shown.length) {
-    for (let i = 0; i < Math.min(settings.n, a.legal); i++) {
+    for (let i = 0; i < Math.min(settings.n, a.legalUci.length); i++) {
       el.candidates.insertAdjacentHTML('beforeend', '<li class="cand skeleton"><span></span></li>');
     }
     board.setArrows([]);
@@ -306,15 +372,30 @@ function renderAnalysis() {
   }
   const pov = a.color === 'w' ? 1 : -1;
   const maxProb = Math.max(...shown.map((c) => c.prob));
+  const opp = a.color === 'w' ? 'b' : 'w';
+  const capt = (arr, color) => arr.filter((p) => !p.startsWith('=')).map((p) => `<img src="pieces/${color}${p.toUpperCase()}.svg" alt="${p}">`).join('');
   shown.forEach((c, i) => {
     const o = c.outcome;
-    const san = o.san[0] || c.move;
-    const deltaCls = o.delta > 0 ? 'up' : o.delta < 0 ? 'down' : 'flat';
-    const mate = c.score.mate !== undefined;
-    const chipCls = mate ? (c.score.mate > 0 ? 'up' : 'down') : deltaCls;
-    const chipText = mate ? `M${Math.abs(c.score.mate)}` : o.delta > 0 ? `+${o.delta}` : o.delta < 0 ? `−${-o.delta}` : '±0';
-    const capt = (arr, color) => arr.filter((p) => !p.startsWith('=')).map((p) => `<img src="pieces/${color}${p.toUpperCase()}.svg" alt="${p}">`).join('');
-    const opp = a.color === 'w' ? 'b' : 'w';
+    const san = o?.san[0] || sanOf(a.fen, c.move);
+    let material = '<div class="cand-material"><span class="mat-text muted">Not searched deeply at this level</span></div>';
+    let pv = '';
+    if (o) {
+      const mate = c.score.mate !== undefined;
+      const chipCls = mate ? (c.score.mate > 0 ? 'up' : 'down') : o.delta > 0 ? 'up' : o.delta < 0 ? 'down' : 'flat';
+      const chipText = mate ? `M${Math.abs(c.score.mate)}` : o.delta > 0 ? `+${o.delta}` : o.delta < 0 ? `−${-o.delta}` : '±0';
+      material = `
+        <div class="cand-material">
+          <span class="mat-chip ${chipCls}" title="Material change for ${COLOR_NAME[a.color]} after ${o.plies} plies">${chipText}</span>
+          <span class="mat-text">${describeOutcome(o, c.score)}</span>
+          <span class="mat-pieces">
+            ${o.won.length ? `<span class="gain">${capt(o.won, opp)}</span>` : ''}
+            ${o.lost.length ? `<span class="loss">${capt(o.lost, a.color)}</span>` : ''}
+          </span>
+        </div>`;
+      pv = `<div class="cand-pv mono">${formatPv(o.san, a.fen)}</div>`;
+    }
+    const engineEval = c.score ? formatScore(c.score, pov) : '—';
+    const lossCls = c.loss < 3 ? 'ok' : c.loss < 12 ? 'meh' : 'bad';
     const li = document.createElement('li');
     li.className = 'cand';
     li.style.setProperty('--rank', RANK_COLORS[i % RANK_COLORS.length]);
@@ -323,31 +404,28 @@ function renderAnalysis() {
       <div class="cand-main">
         <div class="cand-top">
           <span class="cand-san">${san}</span>
-          <span class="cand-eval mono">${formatScore(c.score, pov)}</span>
-          <span class="cand-prob mono">${pct(c.prob)}</span>
+          <span class="cand-prob mono" title="Probability the solver plays this move">${pct(c.prob)}</span>
         </div>
         <div class="prob-track"><div class="prob-fill" style="width:${(c.prob * 100).toFixed(1)}%"></div></div>
-        <div class="cand-material">
-          <span class="mat-chip ${chipCls}" title="Material change for ${COLOR_NAME[a.color]} after ${o.plies} plies">${chipText}</span>
-          <span class="mat-text">${describeOutcome(o, c.score)}</span>
-          <span class="mat-pieces">
-            ${o.won.length ? `<span class="gain">${capt(o.won, opp)}</span>` : ''}
-            ${o.lost.length ? `<span class="loss">${capt(o.lost, a.color)}</span>` : ''}
-          </span>
+        <div class="cand-meta">
+          ${c.human !== null ? `<span class="meta" title="How often Maia-2 says players rated ${a.model.elo} choose this move"><i>humans</i> <b class="mono">${pct(c.human)}</b></span>` : ''}
+          <span class="meta" title="Stockfish evaluation after this move (from ${COLOR_NAME[a.color]}'s side)"><i>engine</i> <b class="mono">${engineEval}</b></span>
+          <span class="meta loss-${lossCls}" title="Winning chances lost against the engine's best move"><i>costs</i> <b class="mono">${c.loss < 0.05 ? '0' : c.loss.toFixed(1)}%</b></span>
         </div>
-        <div class="cand-pv mono">${formatPv(o.san, a.fen)}</div>
+        ${material}
+        ${pv}
       </div>`;
-    li.title = `Click to play ${san}. Win-chance loss vs best: ${c.loss.toFixed(1)}% · move accuracy ${Math.round(c.accuracy)}`;
+    li.title = `Click to play ${san}. Move accuracy ${Math.round(c.accuracy)}.`;
     li.addEventListener('mouseenter', () => { hoverIdx = i; drawArrows(); });
     li.addEventListener('mouseleave', () => { hoverIdx = null; drawArrows(); });
     li.addEventListener('click', () => {
-      if (!game.isGameOver()) playMove(uciToMove(c.move), { prob: c.prob, rank: i + 1, elo: a.params.elo, picked: true });
+      if (!game.isGameOver()) playMove(uciToMove(c.move), { prob: c.prob, rank: i + 1, elo: a.model.elo, picked: true });
     });
     if (c.prob === maxProb) li.classList.add('favourite');
     el.candidates.append(li);
   });
-  const rest = 1 - shown.reduce((s, c) => s + c.prob, 0);
-  const restCount = a.legal - shown.length;
+  const rest = 1 - shown.reduce((sum, c) => sum + c.prob, 0);
+  const restCount = a.legalUci.length - shown.length;
   if (restCount > 0) {
     el.otherMoves.innerHTML = `<span>${restCount} other move${restCount === 1 ? '' : 's'}</span><span class="mono">${pct(Math.max(0, rest))}</span>`;
   }
@@ -370,12 +448,12 @@ function formatPv(sans, fen) {
 
 function drawArrows() {
   const a = analysis;
-  if (!a || !settings.arrows || !hintsVisible() || !a.weighted) { board.setArrows([]); return; }
-  const shown = a.weighted.candidates.slice(0, settings.n);
+  if (!a || !settings.arrows || !hintsVisible() || !a.blended) { board.setArrows([]); return; }
+  const shown = a.blended.candidates.slice(0, settings.n);
   if (hoverIdx !== null && shown[hoverIdx]) {
     // Show the hovered line as a numbered sequence of arrows.
     const c = shown[hoverIdx];
-    const plies = c.pv.slice(0, Math.max(1, c.outcome.plies));
+    const plies = (c.pv || [c.move]).slice(0, Math.max(1, c.outcome?.plies ?? 1));
     board.setArrows(plies.map((uci, j) => ({
       from: uci.slice(0, 2), to: uci.slice(2, 4),
       color: j % 2 === 0 ? RANK_COLORS[hoverIdx % RANK_COLORS.length] : '#7d8799',
@@ -398,11 +476,13 @@ function drawArrows() {
 function renderSummary() {
   const a = analysis;
   if (!a) { el.summary.textContent = game.isGameOver() ? 'The game is over.' : 'Waiting for the engine…'; return; }
-  const p = a.params;
-  el.summary.innerHTML = `<b>${COLOR_NAME[a.color]}</b> to move · solver at <b class="mono">${p.elo}</b> (${eloBand(p.elo)})
-    <span class="kv"><span>depth</span><b class="mono">${p.depth}</b></span>
-    <span class="kv"><span>temperature</span><b class="mono">${p.tau.toFixed(p.tau < 10 ? 2 : 0)}</b></span>
-    ${a.weighted ? `<span class="kv"><span>expected accuracy</span><b class="mono">${Math.round(a.weighted.expectedAccuracy)}%</b></span>` : ''}`;
+  const m = a.model;
+  const b = a.blended;
+  el.summary.innerHTML = `<b>${COLOR_NAME[a.color]}</b> to move · <b class="mono">${m.elo}</b> Elo (${eloBand(m.elo)})
+    ${b && a.prior ? `<span class="kv" title="Where the human move probabilities come from"><span>humans via</span><b>${a.source}</b></span>
+    <span class="kv" title="How likely a typical player of this rating is to find a sound move here. Low = a hard position where they usually slip, so the solver leans on Maia-2's human mistakes."><span>sound move</span><b class="mono">${pct(b.soundMass)}</b></span>` : ''}
+    ${b ? `<span class="kv" title="Average accuracy of the move the solver will play (Lichess formula)"><span>expected accuracy</span><b class="mono">${Math.round(b.expectedAccuracy)}%</b></span>` : ''}
+    ${!a.prior ? '<span class="kv warn"><span>engine-only model</span></span>' : ''}`;
 }
 
 function renderEval() {
@@ -513,7 +593,7 @@ function toast(msg) {
 }
 
 // ─────────────────────────── controls ───────────────────────────
-function bindRange(id, outId, key, fmt, { reanalyse = true } = {}) {
+function bindRange(id, outId, key, fmt, onChange) {
   const input = $(id);
   const out = $(outId);
   input.value = settings[key];
@@ -522,8 +602,7 @@ function bindRange(id, outId, key, fmt, { reanalyse = true } = {}) {
     settings[key] = +input.value;
     out.textContent = fmt(settings[key]);
     saveSettings();
-    if (reanalyse) scheduleReanalyse();
-    else if (analysis?.weighted) { setLines(analysis.lines, analysis.final); renderAnalysis(); }
+    onChange();
   });
 }
 
@@ -533,13 +612,11 @@ function scheduleReanalyse() {
   reanalyseTimer = setTimeout(() => { clearTimeout(autoTimer); startAnalysis(); }, 250);
 }
 
-bindRange('inN', 'outN', 'n', (v) => v);
-bindRange('inPool', 'outPool', 'pool', (v) => (v === 0 ? 'all' : v));
-bindRange('inDepth', 'outDepth', 'depth', (v) => (v === 0 ? 'auto' : v));
-bindRange('inTime', 'outTime', 'movetime', (v) => `${(v / 1000).toFixed(1)}s`);
-bindRange('inRand', 'outRand', 'randomness', (v) => `${v.toFixed(2)}×`);
-bindRange('inHorizon', 'outHorizon', 'horizon', (v) => `${v} plies`, { reanalyse: false });
-bindRange('inDelay', 'outDelay', 'delay', (v) => `${(v / 1000).toFixed(1)}s`, { reanalyse: false });
+bindRange('inN', 'outN', 'n', (v) => v, () => {
+  if (analysis?.lines.length) setLines(analysis.lines, analysis.final);
+  else renderAnalysis();
+});
+bindRange('inHuman', 'outHuman', 'humanness', (v) => (v < 0.95 ? `${v.toFixed(2)}× engine-strict` : v > 1.05 ? `${v.toFixed(2)}× more slips` : 'default'), reblend);
 
 function bindToggle(id, key, after) {
   const input = $(id);
