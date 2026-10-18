@@ -50,6 +50,14 @@ export function eloBand(elo) {
 //                the best are all about equally likely, so the best move is rarely favoured,
 //                and a standout tactic (everything else loses 30 points) is only found part
 //                of the time, as is the punishment of an opponent's blunder;
+//   below ~1100  additionally a share `lambda` of moves are LAPSES: the player picks one of
+//                their few natural-looking moves (Maia-2's top 8, flattened) without checking
+//                it is safe (about 90% at 0-100 Elo, fading to nothing at 1100). This is how
+//                weak humans lose: a plausible move that hangs a piece or misses a threat,
+//                never a random one. Chess.com-style accuracy cannot see "weaker than ~1000"
+//                unless errors start in equal positions: a bot that loses 92% of its games
+//                to a 1100 player still read as ~1050 with only the softmax, because once a
+//                game is lost every later move scores as fine.
 //   above 2000   the prior fades out and the veto tightens until, near 3000, the top
 //                engine moves are played.
 // tools/calibrate.mjs and tools/match.mjs measure what these settings actually produce.
@@ -59,6 +67,7 @@ const ANCHORS = {
   tau:     [28,   22,   16,   10,   7,    6,    5,    2,    0.5],   // win-% points
   betaCap: [1,    1,    1,    0.6,  0.25, 0.3,  0.45, 0.9,  1],
   kappa:   [0,    0,    0,    0.5,  1,    1,    1,    0.4,  0],
+  lambda:  [0.92, 0.8,  0.62, 0.35, 0,    0,    0,    0,    0],      // share of random legal moves
 };
 
 function interpolate(xs, ys, elo, log = false) {
@@ -94,9 +103,10 @@ export function playerModel(elo, { humanness = 1, maia = true } = {}) {
     tau: at('tau', e, true),
     betaCap: Math.min(1, at('betaCap', e) / h),
     kappa: at('kappa', e),
+    lambda: Math.min(0.97, at('lambda', e) * h),
   };
   if (!maia) {
-    Object.assign(m, { alpha: 0, tau: interpolate(ENGINE_ONLY.elo, ENGINE_ONLY.tau, e, true) * h, betaCap: 1, kappa: 0 });
+    Object.assign(m, { alpha: 0, tau: interpolate(ENGINE_ONLY.elo, ENGINE_ONLY.tau, e, true) * h, betaCap: 1, kappa: 0, lambda: 0 });
   }
   return m;
 }
@@ -146,6 +156,9 @@ export function formatScore(score, povSign = 1) {
   return `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(2)}`;
 }
 
+// How many of the human prior's favourite moves a lapse chooses among.
+const LAPSE_TOP_K = 8;
+
 // Win-% loss assumed for legal moves the engine did not score (only at the top levels).
 const UNLISTED_MIN_LOSS = 15;
 
@@ -185,6 +198,16 @@ export function blendMoves(lines, prior, legalUci, model) {
     return prior_ * Math.pow(sound[i], beta);
   });
   const total = weights.reduce((a, b) => a + b, 0);
+  const lambda = prior ? model.lambda || 0 : 0;
+  let lapse = null;
+  if (lambda > 0) {
+    // an unchecked, natural-looking move: only the few moves the human prior likes, flattened
+    const favourites = new Set(human.map((p, i) => i).sort((x, y) => human[y] - human[x]).slice(0, LAPSE_TOP_K));
+    const w = human.map((p, i) => (favourites.has(i) ? Math.pow(Math.max(p, 1e-9), Math.max(model.alpha, 0.2)) : 0));
+    const sum = w.reduce((a, b) => a + b, 0);
+    lapse = w.map((x) => x / sum);
+  }
+  const probs = weights.map((w, i) => (lambda > 0 ? (1 - lambda) * (w / total) + lambda * lapse[i] : w / total));
 
   const candidates = legalUci.map((move, i) => {
     const line = byMove.get(move);
@@ -192,7 +215,7 @@ export function blendMoves(lines, prior, legalUci, model) {
       move,
       ...(line || {}),
       listed: !!line,
-      prob: weights[i] / total,
+      prob: probs[i],
       human: prior ? human[i] : null,
       loss: loss[i],
       accuracy: moveAccuracy(loss[i]),

@@ -83,6 +83,25 @@ test('errors cluster where sound moves are hard: expected accuracy is lower in t
   assert.ok(easy.expectedAccuracy > hard.expectedAccuracy + 20);
 });
 
+test('low-Elo lapses pick natural-looking moves, never the odd ones nobody plays', () => {
+  assert.ok(playerModel(100).lambda > 0.8);
+  assert.equal(playerModel(1100).lambda, 0);
+  assert.equal(playerModel(2000).lambda, 0);
+  assert.ok(playerModel(100, { humanness: 1.5 }).lambda > playerModel(100).lambda);
+  assert.ok(playerModel(100, { humanness: 5 }).lambda <= 0.97);
+  // 20 legal moves: m0 is the only good one; humans like m1..m4 (all bad) and ignore the rest
+  const legal = Array.from({ length: 20 }, (_, i) => `m${i}`);
+  const lines = legal.map((m, i) => line(m, i === 0 ? 100 : -500));
+  const human = new Map(legal.map((m, i) => [m, i === 0 ? 0.2 : i <= 4 ? 0.19 : 0.0025]));
+  const b = blendMoves(lines, human, legal, playerModel(100));
+  assert.ok(Math.abs(b.candidates.reduce((s, c) => s + c.prob, 0) - 1) < 1e-9);
+  const p = (m) => b.candidates.find((c) => c.move === m).prob;
+  assert.ok(p('m1') > 3 * p('m10'), `natural-looking bad move ${p('m1')} vs odd move ${p('m10')}`);
+  assert.ok(p('m0') < 0.6, 'the one good move is no longer near-certain');
+  // no human prior (engine-only fallback): no lapses
+  assert.equal(blendMoves(lines, null, legal, playerModel(100, { maia: false })).candidates.length, 20);
+});
+
 test('the engine move is near-certain at the top and not at the bottom', () => {
   const legal = ['a', 'b', 'c', 'd'];
   const lines = [line('a', 100), line('b', 20), line('c', -60), line('d', -10)];
@@ -102,9 +121,10 @@ test('a wide softmax (low Elo) finds a standout tactic less often and rarely fav
   assert.ok(found(100) < 0.35, `100 Elo finds it ${found(100)}`);
   assert.ok(found(100) < found(500) && found(500) < found(2500), [100, 500, 2500].map(found).join(' < '));
   assert.ok(found(3000) > 0.9);
-  // quiet position: ten near-equal moves; the best should barely be favoured at 100 Elo
-  const quiet = moves.map((m, i) => line(m, i === 0 ? 10 : 8 - (i % 3)));
-  const top = probOf(blendMoves(quiet, uniformPrior, moves, playerModel(100)), 'best');
+  // quiet position: near-equal moves; the best (placed last, so no tie favours it) is barely favoured
+  const reordered = [...moves.slice(1), 'best'];
+  const quiet = reordered.map((m) => line(m, m === 'best' ? 10 : 8));
+  const top = probOf(blendMoves(quiet, new Map(reordered.map((m) => [m, 1 / reordered.length])), reordered, playerModel(100)), 'best');
   assert.ok(top < 2 / moves.length, `top move share ${top} vs uniform ${1 / moves.length}`);
 });
 
