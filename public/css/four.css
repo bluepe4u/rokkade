@@ -1,0 +1,90 @@
+/* Four-player chess page. Builds on app.css (tokens, cards, buttons, board squares). */
+:root {
+  --p0: #d9473f; /* Red */
+  --p1: #3f7fd9; /* Blue */
+  --p2: #e3b72c; /* Yellow */
+  --p3: #3fa65a; /* Green */
+}
+
+.topbar-actions { margin-left: auto; }
+.topbar .topbar-status { margin-left: auto; }
+
+.segmented.wide { display: flex; width: 100%; margin: 0 0 10px; }
+.segmented.wide button { flex: 1; padding: 8px 10px; }
+.btn.full { width: 100%; }
+select.input { font-size: 13px; padding: 9px 12px; }
+
+/* seats */
+.seat { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px 10px; align-items: center; padding: 10px; border-radius: var(--radius-sm); background: var(--muted); border: 1px solid var(--border); margin-bottom: 8px; }
+.seat-swatch { width: 14px; height: 14px; border-radius: 4px; background: var(--c); box-shadow: 0 0 0 2px color-mix(in srgb, var(--c) 28%, transparent); }
+.seat-name { font-family: var(--font-display); font-weight: 600; }
+.seat-name small { font-family: var(--font-sans); font-weight: 500; color: var(--muted-foreground); margin-left: 6px; }
+.seat .level { grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(0, 1fr) 62px; align-items: center; gap: 10px; font-size: 12px; color: var(--muted-foreground); }
+.seat .level b { text-align: right; color: var(--foreground); font-weight: 600; }
+.seat.human .level { display: none; }
+
+/* board */
+.turn-banner { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 8px 14px; border-radius: 14px; background: var(--card); border: 1px solid var(--border); box-shadow: var(--card-elev); font-weight: 500; }
+.turn-banner .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 4px color-mix(in srgb, var(--c) 25%, transparent); flex: none; }
+.turn-banner .who { font-family: var(--font-display); font-weight: 600; }
+.turn-banner .sub { color: var(--muted-foreground); font-size: 13px; margin-left: auto; }
+.turn-banner .thinking { color: var(--cta); animation: pulse 1.2s ease-in-out infinite; }
+
+.fboard {
+  position: relative; width: 100%; aspect-ratio: 1; display: grid; user-select: none; touch-action: none;
+  grid-template: repeat(14, 1fr) / repeat(14, 1fr);
+  filter: drop-shadow(0 18px 28px #9c4a2f33);
+}
+:root[data-theme="dark"] .fboard { filter: drop-shadow(0 18px 30px #000000a0); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .fboard { filter: drop-shadow(0 18px 30px #000000a0); } }
+.fboard .sq.hole { visibility: hidden; }
+.fboard .piece { cursor: default; }
+.fboard .piece.dead { filter: grayscale(1) opacity(.5); }
+.fboard.my-turn .sq.mine .piece { cursor: grab; }
+.fboard .sq.in-check { background-image: radial-gradient(circle, #ff5a4a 0%, #e0453580 42%, transparent 74%); }
+.fboard .coord { font-size: clamp(7px, 1vw, 10px); }
+.fboard .sq.rim-top { box-shadow: inset 0 3px 0 var(--rim, transparent); }
+
+.board-holder .game-over { max-width: 80%; text-align: center; line-height: 1.35; }
+
+/* scoreboard */
+.scoreboard { display: flex; flex-direction: column; gap: 8px; }
+.pcard { display: grid; grid-template-columns: auto 1fr auto; gap: 2px 12px; align-items: center; padding: 10px 12px; border-radius: 14px; background: var(--muted); border: 1px solid var(--border); border-left: 5px solid var(--c); }
+.pcard.to-move { background: color-mix(in srgb, var(--c) 10%, var(--card)); border-color: color-mix(in srgb, var(--c) 45%, var(--border)); border-left-color: var(--c); box-shadow: var(--card-elev); }
+.pcard.out { opacity: .55; }
+.pcard .nm { font-family: var(--font-display); font-weight: 600; }
+.pcard .sub { grid-column: 2; font-size: 12px; color: var(--muted-foreground); }
+.pcard .pts { grid-row: 1 / span 2; grid-column: 3; font: 600 22px var(--font-mono); text-align: right; }
+.pcard .pts small { display: block; font: 500 10px var(--font-sans); color: var(--muted-foreground); letter-spacing: .08em; text-transform: uppercase; }
+.pcard .swatch { grid-row: 1 / span 2; width: 34px; height: 34px; border-radius: 10px; background: var(--c); display: grid; place-items: center; }
+.pcard .swatch img { width: 26px; height: 26px; }
+.tag { display: inline-block; font: 600 10px var(--font-mono); letter-spacing: .04em; padding: 1px 7px; border-radius: 999px; margin-left: 6px; background: var(--info-muted); color: var(--muted-foreground); vertical-align: 2px; }
+.tag.check { background: var(--destructive-muted); color: var(--destructive); }
+.tag.out { background: var(--track); }
+.tag.team { background: color-mix(in srgb, var(--cta) 15%, transparent); color: var(--cta); }
+
+.team-totals { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.team-totals .tt { padding: 8px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--chip-rest); font-size: 12px; color: var(--muted-foreground); }
+.team-totals .tt b { display: block; font: 600 20px var(--font-mono); color: var(--foreground); }
+
+.result-box { margin-top: 12px; padding: 12px 14px; border-radius: 14px; background: var(--success-muted); color: var(--foreground); font-weight: 500; }
+.result-box ol { margin: 8px 0 0; padding-left: 20px; font-weight: 400; }
+.result-box ol li { margin: 2px 0; }
+
+/* moves */
+.movelist.four { max-height: 280px; }
+.movelist.four li { display: flex; flex-wrap: wrap; gap: 2px 4px; grid-template-columns: none; align-items: center; padding: 3px 4px; }
+.movelist.four .mv-no { min-width: 26px; }
+.movelist.four .chip4 { display: inline-flex; align-items: center; gap: 5px; padding: 1px 7px 1px 6px; border-radius: 8px; font-size: 12px; background: color-mix(in srgb, var(--c) 14%, transparent); }
+.movelist.four .chip4::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+.movelist.four .chip4.latest { outline: 2px solid var(--c); }
+.movelist.four .chip4 em { font-style: normal; color: var(--muted-foreground); font-size: 11px; }
+
+.rules summary { cursor: pointer; font-weight: 600; font-family: var(--font-display); }
+.rules ul { margin: 10px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--muted-foreground); }
+.rules li { margin: 6px 0; line-height: 1.45; }
+.rules b { color: var(--foreground); }
+
+@media (max-width: 900px) {
+  .brand-name { display: none; }
+}

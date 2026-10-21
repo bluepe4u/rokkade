@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Four-Player Chess</title>
+  <meta name="description" content="Four-player chess on the 14x14 cross board: free-for-all and 2v2 teams, against bots or friends." />
+  <link rel="icon" href="pieces/wK.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Onest:wght@400;500;600;700&family=Sora:wght@500;600;700&display=swap" />
+  <link rel="stylesheet" href="css/app.css" />
+  <link rel="stylesheet" href="css/four.css" />
+  <script>
+    try { const t = localStorage.getItem('sfet.theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark"><img src="pieces/wK.svg" alt="" /></span>
+      <span class="brand-name">FOUR-PLAYER <em>CHESS</em></span>
+    </div>
+    <nav class="mode-tabs" aria-label="Game">
+      <a href="./">Classic · Stockfish &amp; Maia-2</a>
+      <a href="four.html" aria-current="page">4-Player</a>
+    </nav>
+    <div class="topbar-actions">
+      <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- ───────── Left: setup ───────── -->
+    <aside class="panel settings" aria-label="Game setup">
+      <section class="card">
+        <h2 class="card-title">Mode</h2>
+        <div class="segmented wide" role="radiogroup" aria-label="Game mode">
+          <button data-mode="ffa" role="radio">Free-for-all</button>
+          <button data-mode="teams" role="radio">Teams 2v2</button>
+        </div>
+        <p class="auto-note" id="modeNote"></p>
+        <button class="btn cta full" id="btnNew">New game</button>
+      </section>
+
+      <section class="card">
+        <h2 class="card-title">Seats</h2>
+        <div id="seats"></div>
+        <p class="auto-note">Several humans can share one screen: the board turns to whoever is up, or stays put if you pick a fixed view.</p>
+      </section>
+
+      <section class="card">
+        <h2 class="card-title">Display</h2>
+        <label class="field">
+          <span class="field-row"><span>View from</span></span>
+          <select class="input" id="viewSel">
+            <option value="auto">Auto</option>
+            <option value="0">Red (bottom)</option>
+            <option value="1">Blue (left)</option>
+            <option value="2">Yellow (top)</option>
+            <option value="3">Green (right)</option>
+          </select>
+        </label>
+        <label class="toggle"><input type="checkbox" id="inHints" /><span>Show legal moves</span></label>
+        <label class="toggle"><input type="checkbox" id="inCoords" /><span>Board coordinates</span></label>
+      </section>
+
+      <section class="card">
+        <details class="rules">
+          <summary>How it plays</summary>
+          <ul>
+            <li><b>Order:</b> Red → Blue → Yellow → Green, clockwise. Teams: Red + Yellow vs Blue + Green (teammates sit opposite).</li>
+            <li><b>Pawns</b> advance toward the opposite side and promote to a queen on the 8th rank (FFA) or the 11th (Teams). Castling is allowed; there is no en passant.</li>
+            <li><b>Check</b> comes from any opponent. Kings are never captured: you are checkmated when your turn comes and you cannot escape. In FFA the mated player is out and their pieces turn grey and dead.</li>
+            <li><b>FFA points:</b> pawn 1, knight 3, bishop 5, rook 5, queen 9 (a promoted queen is worth 1), checkmate +20, stalemate +20 (to the stalemated player), forking two or three kings +1/+5 (queen) or +5/+20. Three eliminations end the game; most points wins.</li>
+            <li><b>Teams:</b> the first checkmate wins; stalemate is a draw.</li>
+            <li><b>Draws:</b> threefold repetition, 50 rounds without a capture or pawn move, or too little material (FFA: +10 each).</li>
+          </ul>
+        </details>
+      </section>
+    </aside>
+
+    <!-- ───────── Center: board ───────── -->
+    <section class="center">
+      <div class="turn-banner" id="turnBanner"></div>
+      <div class="board-holder">
+        <div class="fboard" id="fboard"></div>
+        <div class="game-over" id="gameOver" hidden></div>
+      </div>
+      <div class="controls">
+        <button class="btn" id="btnTurn" title="Rotate the board a quarter turn (R)">Rotate view</button>
+        <button class="btn" id="btnPause" title="Pause / resume the bots (P)">Pause bots</button>
+        <button class="btn cta" id="btnNudge" title="Let the bot play this move now (Space)" hidden>Move now</button>
+      </div>
+    </section>
+
+    <!-- ───────── Right: scoreboard ───────── -->
+    <aside class="panel analysis" aria-label="Scoreboard">
+      <section class="card">
+        <div class="card-head">
+          <h2 class="card-title">Scoreboard</h2>
+          <span class="badge" id="statusBadge"></span>
+        </div>
+        <div id="scoreboard" class="scoreboard"></div>
+        <div id="teamTotals" class="team-totals" hidden></div>
+        <div id="resultBox" class="result-box" hidden></div>
+      </section>
+
+      <section class="card">
+        <h2 class="card-title">Moves</h2>
+        <ol class="movelist four" id="movelist"></ol>
+      </section>
+    </aside>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="js/four/main.js"></script>
+</body>
+</html>

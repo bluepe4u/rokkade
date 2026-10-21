@@ -2,7 +2,9 @@
 
 A browser chess terminal built around an **Elo-weighted Stockfish solver**. Set the solver's strength anywhere from **0 to 3000 Elo**, let it or a human play each side, and watch it highlight its **n best moves**: how likely a player of that Elo is to choose each one, and how each line changes the material balance.
 
-Strength comes from **Maia-2**, a neural network that predicts which move a human of a given rating plays, combined with **Stockfish** so that mistakes happen where players of that rating actually make them.
+The app has two games, switched with the tabs in the header: **Classic** (below) and **4-Player** chess, described [further down](#four-player-chess).
+
+Strength in the classic game comes from **Maia-2**, a neural network that predicts which move a human of a given rating plays, combined with **Stockfish** so that mistakes happen where players of that rating actually make them.
 
 The design takes its cues from [aidachess.com](https://aidachess.com): a warm parchment/navy palette, terracotta accents, and Sora, Onest and JetBrains Mono type. Light and dark themes are both included.
 
@@ -68,6 +70,29 @@ node tools/calibrate.mjs --elo 1500 --mode maia                            # the
 
 `--beta-cap`, `--tau`, `--alpha`, `--lambda` and `--humanness` override the model for experiments. Match scores from 12–24 games carry roughly ±70–100 Elo of noise; use more games before moving a curve.
 
+## Four-player chess
+
+`four.html` (the **4-Player** tab) is four-player chess on the 14×14 cross-shaped board with Red, Blue, Yellow and Green, following the [chess.com rules](https://support.chess.com/en/articles/8614233-4-player-chess-4pc):
+
+- **Free-for-all (FFA)**: everyone against everyone. Points for captures (pawn 1, knight 3, bishop 5, rook 5, queen 9; a promoted queen is worth 1), checkmate +20, stalemate +20 to the stalemated player (who is out), and forking two or three kings with one move (+1 / +5 with a queen, +5 / +20 otherwise). A checkmated player is eliminated and their pieces turn grey and dead (no longer move, attack or score). The game ends after three eliminations or on a draw (each remaining player +10); most points wins.
+- **Teams 2v2**: Red + Yellow against Blue + Green (teammates sit opposite and cannot capture each other). The first checkmate wins; stalemate is a draw.
+- Turn order Red → Blue → Yellow → Green. Pawns advance toward the opposite side and promote to a queen on the 8th rank (FFA) or the 11th (Teams). Castling is supported (king two squares toward either rook, the rook hops over); there is no en passant. Kings are never captured: you are checkmated when your turn comes and you cannot escape. Draws by threefold repetition, 50 rounds without a capture or pawn move, or insufficient material.
+- **Seats**: each colour can be a Human or a Bot, so you can play alone against three bots, share one screen with friends, or watch four bots. Bot strength has four levels:
+
+  | Level | Plays like |
+  | --- | --- |
+  | Beginner | random moves, usually grabbing a capture when there is one |
+  | Casual | looks one move ahead; takes anything that looks good, blind to recaptures |
+  | Club | alpha-beta search (about 3 plies plus captures), under a 0.9 s limit |
+  | Strong | iterative deepening with a 2.8 s limit and little randomness |
+
+  The bots search "paranoid": from a bot's seat everyone not on its side tries to minimise its evaluation, while its teammate cooperates. Stockfish and Maia-2 only understand two-player chess, so these bots are purpose-built and far weaker than Stockfish is at classic chess; they run in a Web Worker so the page never freezes.
+- The board can be viewed from any seat (**Rotate view**, or the *View from* setting); by default it turns to the human's seat when there is exactly one.
+
+Keyboard: `R` rotate the view, `P` pause or resume the bots, `Space` plays one bot move while paused, `N` starts a new game.
+
+The rules live in `public/js/four/rules.js` (pure logic, no DOM) and are covered by `test/four.rules.test.mjs` (checkmate, stalemate, forks, promotion ranks, castling, dead pieces, draws, turn skipping, and a random-playout fuzzer that checks invariants over thousands of moves).
+
 ## Project layout
 
 ```
@@ -79,6 +104,7 @@ public/
   js/solver.js                 Maia-2 + Stockfish blend, per-Elo curves, material outcome
   js/maia.js                   Maia-2 in the browser (onnxruntime-web): board encoding, move index, Elo buckets
   js/book.js                   opening prior for the first 10 plies (Maia-2 never trained on them)
+  four.html, js/four/          four-player chess: rules.js (engine), bot.js (+ bot-worker.js), main.js (UI)
   engine/                      Stockfish 19 lite single-threaded WASM (GPLv3)
   models/                      maia2-blitz.onnx (41 MB, fp16 weights), maia2-moves.json, opening-book.json
   vendor/ort/                  onnxruntime-web 1.27 (WASM, MIT)
@@ -90,7 +116,7 @@ tools/match.mjs                solver vs Maia-2 matches: strength calibration (N
 tools/calibrate.mjs            self-play move-class calibration (Node)
 tools/maia2/                   rebuild the ONNX model and test fixtures (Python, dev only)
 tools/build_book.py            rebuild the opening book
-test/                          node --test unit tests (npm test)
+test/                          node --test unit tests (npm test): solver, Maia-2 parity, four-player rules and bots
 ```
 
 ## Licenses
