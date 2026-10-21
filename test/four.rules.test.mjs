@@ -26,25 +26,43 @@ test('board shape: 160 valid squares, corners removed', () => {
   assert.ok(isValidSquare(sq(3, 0)) && isValidSquare(sq(0, 3)) && isValidSquare(sq(10, 13)));
 });
 
-test('starting position: 16 pieces each, kings facing queens, symmetric under a 90-degree turn', () => {
+test('starting position (chess.com Old Standard): 16 pieces each, all kings on light squares, each king facing the opposing queen', () => {
   const g = newGame();
   const counts = [0, 0, 0, 0];
   for (let i = 0; i < CELLS; i++) { const v = g.board[i]; if (v && v !== INVALID) counts[pieceOwner(v)]++; }
   assert.deepEqual(counts, [16, 16, 16, 16]);
+  assert.deepEqual(g.kingSq.map(squareName), ['h1', 'a8', 'g14', 'n7'], 'Red h1, Blue a8, Yellow g14, Green n7');
+  const queen = (p) => { for (let k = 0; k < 8; k++) if (pieceType(g.board[backSquare(p, k)]) === QUEEN) return squareName(backSquare(p, k)); };
+  assert.deepEqual([0, 1, 2, 3].map(queen), ['g1', 'a7', 'h14', 'n8'], 'Red g1, Blue a7, Yellow h14, Green n8');
+  // every king stands on a light square (x + y odd) and has the opposing queen straight across the board
+  for (const king of g.kingSq) assert.equal((king % 14 + Math.floor(king / 14)) % 2, 1, `${squareName(king)} is a light square`);
+  assert.equal(pieceType(g.board[sq(7, 13)]), QUEEN);  // Yellow's queen h14 faces Red's king h1
+  assert.equal(pieceType(g.board[sq(13, 7)]), QUEEN);  // Green's queen n8 faces Blue's king a8
+  assert.equal(pieceType(g.board[sq(0, 6)]), QUEEN);   // Blue's queen a7 faces Green's king n7
+  // the position is symmetric under a half turn: (x, y) -> (13 - x, 13 - y) swaps Red<->Yellow and Blue<->Green
+  for (let i = 0; i < CELLS; i++) {
+    const v = g.board[i];
+    if (!v || v === INVALID) continue;
+    const w = g.board[sq(13 - (i % 14), 13 - Math.floor(i / 14))];
+    assert.equal(pieceType(w), pieceType(v), `type under half turn at ${squareName(i)}`);
+    assert.equal(pieceOwner(w), (pieceOwner(v) + 2) & 3);
+  }
+});
+
+test('Omatamix setup: Blue and Green swap king and queen, making the whole board symmetric under a quarter turn', () => {
+  const g = newGame('ffa', { setup: 'omatamix' });
   assert.deepEqual(g.kingSq.map(squareName), ['h1', 'a7', 'g14', 'n8']);
-  assert.equal(pieceType(g.board[sq(6, 0)]), QUEEN);   // Red queen g1, so Red's king faces Yellow's queen
-  assert.equal(pieceType(g.board[sq(7, 13)]), QUEEN);  // Yellow queen h14
-  assert.equal(pieceType(g.board[sq(0, 7)]), QUEEN);   // Blue queen a8
-  assert.equal(pieceType(g.board[sq(13, 6)]), QUEEN);  // Green queen n7
+  for (const king of g.kingSq.slice(1, 2).concat(g.kingSq.slice(3))) assert.equal((king % 14 + Math.floor(king / 14)) % 2, 0, 'Blue and Green kings are on dark squares');
   // a clockwise quarter turn (x, y) -> (y, 13 - x) carries each player's army onto the next player's
   for (let i = 0; i < CELLS; i++) {
     const v = g.board[i];
     if (!v || v === INVALID) continue;
-    const x = i % 14; const y = Math.floor(i / 14);
-    const w = g.board[sq(y, 13 - x)];
+    const w = g.board[sq(Math.floor(i / 14), 13 - (i % 14))];
     assert.equal(pieceType(w), pieceType(v), `type under rotation at ${squareName(i)}`);
     assert.equal(pieceOwner(w), (pieceOwner(v) + 1) & 3);
   }
+  for (let p = 0; p < 4; p++) assert.equal(legalMoves(g, p).length, 20);
+  assert.throws(() => newGame('ffa', { setup: 'nope' }));
 });
 
 test('every player has the 20 usual opening moves', () => {
@@ -203,29 +221,38 @@ test('promotion choice: FFA promotes to a queen automatically, Teams offers Q/R/
   assert.equal(deserialize(serialize(fromPieces(pieces, { choosePromotion: true }))).choosePromotion, true);
 });
 
-test('castling: both sides for every player, rook hops over; blocked by attacks, check, and lost rights', () => {
-  for (let p = 0; p < 4; p++) {
-    const g = newGame();
-    for (const k of [1, 2, 3, 5, 6]) g.board[backSquare(p, k)] = 0;
-    g.turn = p;
-    const castles = legalMoves(g, p).filter((m) => moveFlags(m) & (FLAG_CASTLE_K | FLAG_CASTLE_Q));
-    assert.equal(castles.length, 2, `player ${p} has both castling moves`);
-    const kside = castles.find((m) => moveFlags(m) & FLAG_CASTLE_K);
-    const qside = castles.find((m) => moveFlags(m) & FLAG_CASTLE_Q);
-    assert.equal(moveTo(kside), backSquare(p, 6));
-    assert.equal(moveTo(qside), backSquare(p, 2));
-    const h = cloneState(g);
-    playMove(h, kside);
-    assert.equal(pieceType(h.board[backSquare(p, 6)]), KING);
-    assert.equal(pieceType(h.board[backSquare(p, 5)]), ROOK);
-    assert.equal(h.board[backSquare(p, 7)], 0);
-    assert.equal(h.board[backSquare(p, 4)], 0);
-    assert.equal(h.castle & (3 << (2 * p)), 0, 'rights are gone after castling');
-    const q = cloneState(g);
-    playMove(q, qside);
-    assert.equal(pieceType(q.board[backSquare(p, 2)]), KING);
-    assert.equal(pieceType(q.board[backSquare(p, 3)]), ROOK);
+test('castling: both sides for every player in both setups, rook hops over; blocked by attacks, check, and lost rights', () => {
+  for (const setup of ['standard', 'omatamix']) {
+    for (let p = 0; p < 4; p++) {
+      const g = newGame('ffa', { setup });
+      const kk = [0, 1, 2, 3, 4, 5, 6, 7].find((k) => pieceType(g.board[backSquare(p, k)]) === KING);
+      for (let k = 1; k < 7; k++) if (k !== kk) g.board[backSquare(p, k)] = 0; // only the king and the two rooks remain
+      g.turn = p;
+      const castles = legalMoves(g, p).filter((m) => moveFlags(m) & (FLAG_CASTLE_K | FLAG_CASTLE_Q));
+      assert.equal(castles.length, 2, `${setup}: player ${p} has both castling moves`);
+      const kside = castles.find((m) => moveFlags(m) & FLAG_CASTLE_K);
+      const qside = castles.find((m) => moveFlags(m) & FLAG_CASTLE_Q);
+      assert.equal(moveTo(kside), backSquare(p, kk + 2), `${setup} ${p}: the king moves two squares toward the far rook`);
+      assert.equal(moveTo(qside), backSquare(p, kk - 2));
+      const h = cloneState(g);
+      playMove(h, kside);
+      assert.equal(pieceType(h.board[backSquare(p, kk + 2)]), KING);
+      assert.equal(pieceType(h.board[backSquare(p, kk + 1)]), ROOK, 'the rook lands on the square the king crossed');
+      assert.equal(h.board[backSquare(p, 7)], 0);
+      assert.equal(h.board[backSquare(p, kk)], 0);
+      assert.equal(h.castle & (3 << (2 * p)), 0, 'rights are gone after castling');
+      const q = cloneState(g);
+      playMove(q, qside);
+      assert.equal(pieceType(q.board[backSquare(p, kk - 2)]), KING);
+      assert.equal(pieceType(q.board[backSquare(p, kk - 1)]), ROOK);
+      assert.equal(q.board[backSquare(p, 0)], 0);
+    }
   }
+  // standard Blue/Green kings stand on k=3, so their short side is the near rook: king k=1, rook k=2
+  const blue = newGame();
+  for (const k of [1, 2, 4, 5, 6]) blue.board[backSquare(1, k)] = 0;
+  blue.turn = 1;
+  assert.ok(legalMoves(blue, 1).some((m) => moveTo(m) === backSquare(1, 1) && moveFlags(m) & FLAG_CASTLE_Q));
   // Red: an enemy rook eyes the square the king must cross (i1)
   const attacked = newGame();
   for (const k of [1, 2, 3, 5, 6]) attacked.board[backSquare(0, k)] = 0;

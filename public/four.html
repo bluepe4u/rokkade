@@ -42,8 +42,15 @@
           <button data-mode="teams" role="radio">Teams 2v2</button>
         </div>
         <p class="auto-note" id="modeNote"></p>
+        <label class="field">
+          <span class="field-row"><span>Starting position</span></span>
+          <select class="input" id="setupSel">
+            <option value="standard">Standard (chess.com)</option>
+            <option value="omatamix">Omatamix (Blue/Green K↔Q)</option>
+          </select>
+        </label>
         <label class="toggle"><input type="checkbox" id="inFfaChoice" /><span>FFA: choose the promotion piece</span></label>
-        <p class="auto-note">Off = chess.com's rule: an FFA pawn becomes a queen automatically. Teams always lets you choose. A promoted piece is worth 1 point when captured. Applies to the next new game.</p>
+        <p class="auto-note">Standard puts every king on a light square (Red h1, Yellow g14, Blue a8, Green n7), each facing the opposing queen. Omatamix swaps Blue's and Green's king and queen. <br>Promotion: off = chess.com's rule: an FFA pawn becomes a queen automatically. Teams always lets you choose. A promoted piece is worth 1 point when captured. Applies to the next new game.</p>
         <button class="btn cta full" id="btnNew">New game</button>
       </section>
 
