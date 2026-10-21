@@ -12,7 +12,8 @@
 import {
   CELLS, INVALID, PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING,
   pseudoMoves, makeMove, unmakeMove, attackedBy, legalMoves, nextActive,
-  moveFrom, moveTo, moveFlags, FLAG_PROMOTION, TEAM,
+  moveFrom, moveTo, moveFlags, FLAG_PROMOTION, TEAM, promotionPiece,
+  captureValue, moveText, isFriend, pieceType, pieceOwner,
 } from './rules.js';
 
 export const LEVEL_NAMES = ['', 'Beginner', 'Casual', 'Club', 'Strong'];
@@ -78,7 +79,7 @@ function orderMoves(state, moves) {
     const victim = victimValue(state, b[moveTo(m)]);
     const attacker = VALUE[b[moveFrom(m)] & 7];
     let s = victim ? 10 * victim - attacker / 10 : 0;
-    if (moveFlags(m) & FLAG_PROMOTION) s += 800;
+    if (moveFlags(m) & FLAG_PROMOTION) s += promotionPiece(m) === QUEEN ? 900 : 300;
     return [s, m];
   });
   scored.sort((a, c) => c[0] - a[0]);
@@ -119,6 +120,7 @@ function qsearch(state, ctx, mover, alpha, beta, qd) {
 
 function search(state, ctx, mover, depth, alpha, beta, ply) {
   if (ctx.stop) return 0;
+  if (ctx.pvLen) ctx.pvLen[ply] = 0;
   if (depth <= 0) return qsearch(state, ctx, mover, alpha, beta, ctx.qdepth);
   if ((++ctx.nodes & 511) === 0 && ctx.deadline && performance.now() > ctx.deadline) { ctx.stop = true; return 0; }
   const maximizing = ctx.friendly[mover];
@@ -132,8 +134,18 @@ function search(state, ctx, mover, depth, alpha, beta, ply) {
     const v = search(state, ctx, nextP, depth - 1, alpha, beta, ply + 1);
     unmakeMove(state, u);
     if (ctx.stop) return 0;
-    if (maximizing) { if (v > best) best = v; if (best > alpha) alpha = best; }
-    else { if (v < best) best = v; if (best < beta) beta = best; }
+    if (maximizing ? v > best : v < best) {
+      best = v;
+      if (ctx.pvLen) { // this move is now the node's best: its line is the move plus the child's line
+        const here = ctx.pv[ply];
+        const below = ctx.pv[ply + 1];
+        here[0] = m;
+        const len = ctx.pvLen[ply + 1];
+        for (let i = 0; i < len; i++) here[i + 1] = below[i];
+        ctx.pvLen[ply] = len + 1;
+      }
+    }
+    if (maximizing) { if (best > alpha) alpha = best; } else if (best < beta) beta = best;
     if (alpha >= beta) break;
   }
   return legal === 0 ? terminal(state, ctx, mover, ply) : best;
@@ -198,4 +210,98 @@ export function chooseMove(state, level = 3, { rng = Math.random, timeMs } = {})
   }
   const picked = sample(result, cfg.temp, cfg.margin, rng);
   return { move: picked.move, value: picked.value, depth: reached, nodes: ctx.nodes };
+}
+
+
+// ───────────────────────── analysis: the best n moves ─────────────────────────
+const PIECE_NAMES = ['', 'pawn', 'knight', 'bishop', 'rook', 'queen', 'king'];
+
+/**
+ * Replay a line without scoring, reporting each ply and how the material balance changes for the
+ * player to move at the root (and, in Teams, their partner): what their side wins and loses.
+ */
+export function describeLine(state, line, me) {
+  const undos = [];
+  const steps = [];
+  const gained = [];
+  const lost = [];
+  let gain = 0;
+  let loss = 0;
+  for (const m of line) {
+    const from = moveFrom(m);
+    const to = moveTo(m);
+    const piece = state.board[from];
+    const captured = state.board[to];
+    const mover = pieceOwner(piece);
+    steps.push({ player: mover, move: m, text: moveText(piece, from, to, captured, moveFlags(m)) });
+    const value = captureValue(state, captured);
+    if (captured && value > 0) {
+      const victim = pieceOwner(captured);
+      if (isFriend(state, me, mover) && !isFriend(state, me, victim)) { gain += value; gained.push({ owner: victim, type: pieceType(captured), value }); }
+      else if (isFriend(state, me, victim) && !isFriend(state, me, mover)) { loss += value; lost.push({ owner: victim, type: pieceType(captured), value }); }
+    }
+    undos.push(makeMove(state, m));
+  }
+  while (undos.length) unmakeMove(state, undos.pop());
+  return { steps, gain, loss, delta: gain - loss, gained, lost };
+}
+
+/** "Wins a knight", "Even trade", "Loses 5 points" ... */
+export function describeMaterial({ gained, lost, delta }) {
+  if (!gained.length && !lost.length) return 'No material change';
+  if (delta === 0) return 'Even trade';
+  const side = delta > 0 ? gained : lost;
+  const verb = delta > 0 ? 'Wins' : 'Loses';
+  const other = delta > 0 ? lost : gained;
+  if (side.length === 1 && !other.length) return `${verb} a ${PIECE_NAMES[side[0].type]}`;
+  const n = Math.abs(delta);
+  return `${verb} ${n} point${n === 1 ? '' : 's'}`;
+}
+
+/**
+ * The best `n` moves for the player to move, found by iterative deepening, each with its
+ * evaluation (centipawn-like, from the mover's side's point of view) and principal variation.
+ * Reports every completed depth through `onDepth`.
+ * @returns {{lines: Array, depth: number, nodes: number}}
+ */
+export function analyse(state, { n = 3, timeMs = 2500, maxDepth = 8, qdepth = 5, onDepth } = {}) {
+  const root = state.turn;
+  const moves = legalMoves(state, root);
+  const next = [0, 1, 2, 3].map((p) => nextActive(state, p));
+  const friendly = [0, 1, 2, 3].map((p) => p === root || (state.mode === 'teams' && TEAM[p] === TEAM[root]));
+  const ctx = {
+    root, next, friendly, qdepth, nodes: 0, stop: false, deadline: timeMs ? performance.now() + timeMs : 0,
+    pv: Array.from({ length: 48 }, () => new Array(48).fill(0)), pvLen: new Int32Array(48),
+  };
+  const decorate = (top) => top.map((t, i) => ({
+    rank: i + 1, move: t.move, value: t.value, line: t.pv, ...describeLine(state, t.pv, root),
+  }));
+
+  let ordered = orderMoves(state, moves);
+  let result = ordered.slice(0, n).map((m) => ({ move: m, value: 0, pv: [m] }));
+  let reached = 0;
+  for (let depth = 1; depth <= maxDepth && moves.length; depth++) {
+    const top = [];
+    for (const m of ordered) {
+      const u = makeMove(state, m);
+      ctx.pvLen[1] = 0;
+      // only moves that beat the current n-th best need an exact score
+      const alpha = top.length < n ? -INF : top[n - 1].value;
+      const v = search(state, ctx, next[root], depth - 1, alpha, INF, 1);
+      unmakeMove(state, u);
+      if (ctx.stop) break;
+      if (top.length < n || v > top[n - 1].value) {
+        top.push({ move: m, value: v, pv: [m, ...ctx.pv[1].slice(0, ctx.pvLen[1])] });
+        top.sort((a, c) => c.value - a.value);
+        if (top.length > n) top.pop();
+      }
+    }
+    if (ctx.stop) break;
+    result = top;
+    reached = depth;
+    ordered = [...top.map((t) => t.move), ...ordered.filter((m) => !top.some((t) => t.move === m))];
+    if (onDepth) onDepth({ depth, nodes: ctx.nodes, lines: decorate(top) });
+    if (top.length && top[0].value > MATE - 100) break; // a forced win
+  }
+  return { lines: decorate(result), depth: reached, nodes: ctx.nodes };
 }

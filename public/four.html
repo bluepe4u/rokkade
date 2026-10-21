@@ -42,6 +42,8 @@
           <button data-mode="teams" role="radio">Teams 2v2</button>
         </div>
         <p class="auto-note" id="modeNote"></p>
+        <label class="toggle"><input type="checkbox" id="inFfaChoice" /><span>FFA: choose the promotion piece</span></label>
+        <p class="auto-note">Off = chess.com's rule: an FFA pawn becomes a queen automatically. Teams always lets you choose. A promoted piece is worth 1 point when captured. Applies to the next new game.</p>
         <button class="btn cta full" id="btnNew">New game</button>
       </section>
 
@@ -68,6 +70,18 @@
       </section>
 
       <section class="card">
+        <h2 class="card-title">Engine hints</h2>
+        <label class="field">
+          <span class="field-row"><span>Best moves shown (n)</span><output class="mono" id="outN"></output></span>
+          <input type="range" min="1" max="5" step="1" id="inN" />
+        </label>
+        <label class="toggle"><input type="checkbox" id="inHintsHuman" /><span>Hints on human turns</span></label>
+        <label class="toggle"><input type="checkbox" id="inHintsBots" /><span>Hints on bot turns</span></label>
+        <label class="toggle"><input type="checkbox" id="inArrows" /><span>Arrows on board</span></label>
+        <p class="auto-note">The engine is the same alpha-beta search the bots use, run for about 2.5 s a turn. It assumes everyone not on your side plays against you.</p>
+      </section>
+
+      <section class="card">
         <details class="rules">
           <summary>How it plays</summary>
           <ul>
@@ -87,6 +101,8 @@
       <div class="turn-banner" id="turnBanner"></div>
       <div class="board-holder">
         <div class="fboard" id="fboard"></div>
+        <svg class="board-arrows" id="farrows" viewBox="0 0 800 800" aria-hidden="true"><g class="arrows"></g></svg>
+        <div class="promo" id="promo" hidden></div>
         <div class="game-over" id="gameOver" hidden></div>
       </div>
       <div class="controls">
@@ -98,6 +114,15 @@
 
     <!-- ───────── Right: scoreboard ───────── -->
     <aside class="panel analysis" aria-label="Scoreboard">
+      <section class="card candidates-card">
+        <div class="card-head">
+          <h2 class="card-title">Best moves</h2>
+          <span class="badge" id="searchInfo">off</span>
+        </div>
+        <p class="card-sub" id="hintSummary"></p>
+        <ol class="candidates" id="candidates"></ol>
+      </section>
+
       <section class="card">
         <div class="card-head">
           <h2 class="card-title">Scoreboard</h2>

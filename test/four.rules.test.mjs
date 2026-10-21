@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {
   newGame, fromPieces, legalMoves, playMove, findMove, inCheck, attackedBy, sq, squareName, cloneState,
   makeMove, unmakeMove, pieceType, pieceOwner, moveFrom, moveTo, moveFlags, describeResult, isValidSquare,
-  captureValue, serialize, deserialize, makePiece, backSquare,
+  captureValue, serialize, deserialize, makePiece, backSquare, promotionPiece, isPromoted, xOf, yOf,
+  BISHOP,
   PAWN, KNIGHT, ROOK, QUEEN, KING, FLAG_CASTLE_K, FLAG_CASTLE_Q, FLAG_PROMOTION, CELLS, INVALID,
 } from '../public/js/four/rules.js';
 
@@ -176,6 +177,32 @@ test('pawn promotion: the 8th rank in FFA, the 11th in Teams, always to a queen'
   assert.equal(captureValue(g, v), 1, 'a promoted queen is worth a pawn when captured');
 });
 
+test('promotion choice: FFA promotes to a queen automatically, Teams offers Q/R/B/N, FFA can opt in to choosing', () => {
+  const pieces = [...KINGS, [4, 6, PAWN, 0]];
+  const promos = (state) => legalMoves(state).filter((m) => moveFlags(m) & FLAG_PROMOTION).map(promotionPiece).sort();
+  assert.deepEqual(promos(fromPieces(pieces, { mode: 'ffa' })), [QUEEN], 'FFA: one automatic queen move');
+  assert.deepEqual(promos(fromPieces([...KINGS, [4, 9, PAWN, 0]], { mode: 'teams' })), [KNIGHT, BISHOP, ROOK, QUEEN].sort(), 'Teams: all four pieces');
+  assert.deepEqual(promos(fromPieces(pieces, { mode: 'ffa', choosePromotion: true })), [KNIGHT, BISHOP, ROOK, QUEEN].sort(), 'FFA with the choose option');
+  // underpromotion: the chosen piece appears, flagged as promoted, notated and worth a pawn when captured
+  const g = fromPieces([...KINGS, [4, 9, PAWN, 0]], { mode: 'teams' });
+  const ev = playMove(g, findMove(g, sq(4, 9), sq(4, 10), KNIGHT));
+  assert.equal(pieceType(g.board[sq(4, 10)]), KNIGHT);
+  assert.ok(isPromoted(g.board[sq(4, 10)]));
+  assert.match(ev.text, /=N$/);
+  assert.equal(captureValue(g, g.board[sq(4, 10)]), 1);
+  // the default findMove picks the queen
+  assert.equal(promotionPiece(findMove(fromPieces([...KINGS, [4, 9, PAWN, 0]], { mode: 'teams' }), sq(4, 9), sq(4, 10))), QUEEN);
+  // promotion by capture offers the same choices
+  const cap = fromPieces([...KINGS, [4, 9, PAWN, 0], [5, 10, ROOK, 1]], { mode: 'teams' });
+  assert.equal(legalMoves(cap).filter((m) => moveTo(m) === sq(5, 10)).length, 4);
+  // a promoted piece moves on as a promoted piece
+  const h = fromPieces([...KINGS, [4, 9, PAWN, 0]], { mode: 'teams' });
+  playMove(h, findMove(h, sq(4, 9), sq(4, 10), ROOK));
+  assert.ok(isPromoted(h.board[sq(4, 10)]) && pieceType(h.board[sq(4, 10)]) === ROOK);
+  // serialize keeps the option
+  assert.equal(deserialize(serialize(fromPieces(pieces, { choosePromotion: true }))).choosePromotion, true);
+});
+
 test('castling: both sides for every player, rook hops over; blocked by attacks, check, and lost rights', () => {
   for (let p = 0; p < 4; p++) {
     const g = newGame();
@@ -313,6 +340,15 @@ test('random playouts keep every invariant (FFA and Teams)', () => {
       for (let q = 0; q < 4; q++) {
         if (g.eliminated[q]) continue;
         assert.equal(g.board[g.kingSq[q]], makePiece(KING, q), `live king of ${q} is where we think`);
+      }
+      // a live pawn can never stand on or beyond its promotion line: it would have promoted
+      const line = g.mode === 'teams' ? [10, 10, 3, 3] : [7, 7, 6, 6];
+      for (let i = 0; i < CELLS; i++) {
+        const v = g.board[i];
+        if (!v || v === INVALID || pieceType(v) !== PAWN || g.eliminated[pieceOwner(v)]) continue;
+        const o = pieceOwner(v);
+        const past = o === 0 ? yOf(i) >= line[0] : o === 1 ? xOf(i) >= line[1] : o === 2 ? yOf(i) <= line[2] : xOf(i) <= line[3];
+        assert.ok(!past, `${g.mode}: pawn of ${o} on ${squareName(i)} should have promoted`);
       }
     }
     if (g.result) assert.ok(describeResult(g).length > 0);
