@@ -1,20 +1,27 @@
 import {
-  newGame, legalMoves, playMove, serialize, deserialize, sq, isValidSquare, squareName, inCheck,
-  pieceType, pieceOwner, moveFrom, moveTo, describeResult,
-  NAMES, TEAM, KING, QUEEN, ROOK, BISHOP, KNIGHT, PAWN, INVALID,
+  newGame, legalMoves, playMove, serialize, deserialize, sq, xOf, yOf, isValidSquare, inCheck,
+  pieceType, pieceOwner, moveFrom, moveTo, moveFlags, promotionPiece, describeResult,
+  NAMES, KING, QUEEN, ROOK, BISHOP, KNIGHT, PAWN, INVALID, FLAG_PROMOTION,
 } from './rules.js';
-import { chooseMove, LEVEL_NAMES } from './bot.js';
+import { chooseMove, analyse, describeMaterial, LEVEL_NAMES } from './bot.js';
+import { renderArrows } from '../arrows.js';
 
 // ─────────────────────────── settings ───────────────────────────
 const STORE_KEY = 'sfet.four.v1';
-const DEFAULTS = { mode: 'ffa', ctrl: ['human', 'bot', 'bot', 'bot'], level: [3, 3, 3, 3], view: 'auto', hints: true, coords: true };
+const DEFAULTS = {
+  mode: 'ffa', ctrl: ['human', 'bot', 'bot', 'bot'], level: [3, 3, 3, 3], view: 'auto', hints: true, coords: true,
+  n: 3, hintsHuman: true, hintsBots: false, arrows: true, ffaChoice: false,
+};
 const COLORS = ['#d9473f', '#3f7fd9', '#e3b72c', '#3fa65a'];
-const BOT_DELAY = 450; // ms pause so moves can be followed
+const RANK_COLORS = ['#3f9a63', '#3d7fd1', '#c98a2e', '#a65e46', '#8a63c9'];
+const BOT_DELAY = 450;    // ms pause so moves can be followed
+const ANALYSIS_DELAY = 150;
+const ANALYSIS_MS = 2500; // thinking time for the best-moves panel
 
 function loadSettings() {
   try {
     const raw = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
-    return { ...DEFAULTS, ...raw, ctrl: [...DEFAULTS.ctrl].map((c, i) => raw.ctrl?.[i] ?? c), level: [...DEFAULTS.level].map((l, i) => raw.level?.[i] ?? l) };
+    return { ...DEFAULTS, ...raw, ctrl: DEFAULTS.ctrl.map((c, i) => raw.ctrl?.[i] ?? c), level: DEFAULTS.level.map((l, i) => raw.level?.[i] ?? l) };
   } catch {
     return structuredClone(DEFAULTS);
   }
@@ -26,7 +33,8 @@ const $ = (id) => document.getElementById(id);
 const el = {
   board: $('fboard'), banner: $('turnBanner'), score: $('scoreboard'), teamTotals: $('teamTotals'), result: $('resultBox'),
   moves: $('movelist'), status: $('statusBadge'), over: $('gameOver'), toast: $('toast'), seats: $('seats'),
-  pause: $('btnPause'), nudge: $('btnNudge'), modeNote: $('modeNote'),
+  pause: $('btnPause'), nudge: $('btnNudge'), modeNote: $('modeNote'), promo: $('promo'),
+  cands: $('candidates'), searchInfo: $('searchInfo'), hintSummary: $('hintSummary'), arrows: $('farrows').querySelector('g.arrows'),
 };
 
 // ─────────────────────────── view rotation ───────────────────────────
@@ -56,23 +64,27 @@ async function loadPieceImages() {
     }
   }
 }
+const pieceImg = (owner, type, cls = '') => `<img class="${cls}" src="${images[owner][type]}" alt="">`;
 
-// ─────────────────────────── bot runner ───────────────────────────
+// ─────────────────────────── workers ───────────────────────────
+const workerUrl = () => new URL('./bot-worker.js', import.meta.url);
+
+/** Chooses the bots' moves, on one long-lived worker (falls back to the UI thread). */
 class BotRunner {
   constructor() {
     this.id = 0;
     this.pending = new Map();
     this.worker = null;
     try {
-      this.worker = new Worker(new URL('./bot-worker.js', import.meta.url), { type: 'module' });
+      this.worker = new Worker(workerUrl(), { type: 'module' });
       this.worker.onmessage = (e) => {
         const entry = this.pending.get(e.data.id);
         if (!entry) return;
         this.pending.delete(e.data.id);
-        if (e.data.error) entry.resolve(this.direct(entry.state, entry.level)); else entry.resolve(e.data);
+        entry.resolve(e.data.error ? this.direct(entry.state, entry.level) : e.data);
       };
       this.worker.onerror = () => {
-        this.worker = null; // module workers unsupported or failed: fall back to the UI thread
+        this.worker = null;
         for (const [id, entry] of this.pending) { this.pending.delete(id); entry.resolve(this.direct(entry.state, entry.level)); }
       };
     } catch {
@@ -80,9 +92,7 @@ class BotRunner {
     }
   }
 
-  direct(state, level) {
-    return chooseMove(deserialize(state), level);
-  }
+  direct(state, level) { return chooseMove(deserialize(state), level); }
 
   think(game, level) {
     const state = serialize(game);
@@ -94,20 +104,54 @@ class BotRunner {
     });
   }
 }
+
+/** Finds the best n moves for the hints panel. One short-lived worker per request, so it can be cancelled. */
+class Analyser {
+  constructor() { this.worker = null; this.timer = null; }
+
+  cancel() {
+    clearTimeout(this.timer);
+    this.worker?.terminate();
+    this.worker = null;
+  }
+
+  start(game, { n, timeMs }, onUpdate) {
+    this.cancel();
+    const state = serialize(game);
+    try {
+      this.worker = new Worker(workerUrl(), { type: 'module' });
+      const mine = this.worker;
+      mine.onmessage = (e) => { if (this.worker === mine) onUpdate(e.data); };
+      mine.onerror = () => { if (this.worker === mine) { this.worker = null; this.direct(state, n, onUpdate); } };
+      mine.postMessage({ id: 1, type: 'analyse', state, n, timeMs });
+    } catch {
+      this.direct(state, n, onUpdate);
+    }
+  }
+
+  direct(state, n, onUpdate) { // no worker support: a short search on the UI thread
+    this.timer = setTimeout(() => onUpdate({ type: 'done', ...analyse(deserialize(state), { n, timeMs: 700 }) }), 0);
+  }
+}
 const runner = new BotRunner();
+const analyser = new Analyser();
 
 // ─────────────────────────── game state ───────────────────────────
-let game = newGame(settings.mode);
+let game = newGame(settings.mode, { choosePromotion: settings.ffaChoice });
 let log = [];             // move events
 let legal = [];           // legal moves for the player to move
 let legalBySquare = new Map();
 let selected = null;      // selected square index
-let targets = new Map();  // destination index -> move
+let targets = new Map();  // destination index -> legal moves there (several for a promotion choice)
 let paused = false;
 let thinking = -1;
 let botToken = 0;
 let botTimer = null;
 let drag = null;
+let analysis = null;      // { token, player, lines, depth, nodes, final }
+let analysisToken = 0;
+let analysisTimer = null;
+let hover = -1;           // hovered hint card
 
 const humanTurn = () => !game.result && settings.ctrl[game.turn] === 'human';
 
@@ -124,23 +168,33 @@ function refreshLegal() {
 function select(idx) {
   selected = idx;
   targets = new Map();
-  if (idx !== null && legalBySquare.has(idx)) for (const m of legalBySquare.get(idx)) targets.set(moveTo(m), m);
+  if (idx !== null && legalBySquare.has(idx)) {
+    for (const m of legalBySquare.get(idx)) {
+      const list = targets.get(moveTo(m)) ?? [];
+      list.push(m);
+      targets.set(moveTo(m), list);
+    }
+  }
+  hidePromotion();
   renderBoard();
 }
 
 function startGame() {
   clearTimeout(botTimer);
   botToken++;
-  game = newGame(settings.mode);
+  game = newGame(settings.mode, { choosePromotion: settings.ffaChoice });
   log = [];
   selected = null;
   targets = new Map();
   thinking = -1;
   paused = false;
   el.pause.textContent = 'Pause bots';
+  el.pause.classList.remove('active');
+  hidePromotion();
   refreshLegal();
   renderAll();
   scheduleBot();
+  scheduleAnalysis();
 }
 
 function applyMove(m) {
@@ -150,12 +204,46 @@ function applyMove(m) {
   selected = null;
   targets = new Map();
   thinking = -1;
+  hidePromotion();
   refreshLegal();
   renderAll();
   announce(ev);
   scheduleBot();
+  scheduleAnalysis();
 }
 
+/** A click or drop on a destination: play it, or ask which piece to promote to. */
+function chooseDestination(idx) {
+  const moves = targets.get(idx);
+  if (!moves) return;
+  if (moves.length === 1) applyMove(moves[0]);
+  else askPromotion(moves);
+}
+
+// ─────────────────────────── promotion picker ───────────────────────────
+function askPromotion(moves) {
+  const owner = game.turn;
+  el.promo.innerHTML = '';
+  for (const type of [QUEEN, ROOK, BISHOP, KNIGHT]) {
+    const m = moves.find((x) => promotionPiece(x) === type);
+    if (!m) continue;
+    const b = document.createElement('button');
+    b.title = `Promote to ${['', '', 'knight', 'bishop', 'rook', 'queen'][type]}`;
+    b.innerHTML = pieceImg(owner, type);
+    b.onclick = (e) => { e.stopPropagation(); applyMove(m); };
+    el.promo.append(b);
+  }
+  const cancel = document.createElement('button');
+  cancel.className = 'promo-cancel';
+  cancel.textContent = '✕';
+  cancel.title = 'Cancel';
+  cancel.onclick = (e) => { e.stopPropagation(); hidePromotion(); select(null); };
+  el.promo.append(cancel);
+  el.promo.hidden = false;
+}
+function hidePromotion() { el.promo.hidden = true; el.promo.innerHTML = ''; }
+
+// ─────────────────────────── bots ───────────────────────────
 function scheduleBot() {
   clearTimeout(botTimer);
   const mine = ++botToken;
@@ -182,7 +270,8 @@ function announce(ev) {
     if (e.reason === 'checkmate') notes.push(`${NAMES[e.player]} is checkmated${e.by >= 0 && e.by !== undefined ? ` by ${NAMES[e.by]}` : ''}`);
     else notes.push(`${NAMES[e.player]} is stalemated`);
   }
-  if (!notes.length && ev.checks.length && !ev.over) notes.push(`Check on ${ev.checks.map((q) => NAMES[q]).join(' and ')}`);
+  if (moveFlags(ev.move) & FLAG_PROMOTION) notes.push(`${NAMES[ev.player]} promotes`);
+  if (!ev.eliminated.length && ev.checks.length && !ev.over) notes.push(`Check on ${ev.checks.map((q) => NAMES[q]).join(' and ')}`);
   if (ev.over) notes.push(describeResult(game));
   if (notes.length) toast(notes.join(' · '));
 }
@@ -193,6 +282,119 @@ function toast(msg) {
   el.toast.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.toast.classList.remove('show'), 3600);
+}
+
+// ─────────────────────────── engine hints ───────────────────────────
+const hintsWanted = () => !game.result && (settings.ctrl[game.turn] === 'human' ? settings.hintsHuman : settings.hintsBots);
+
+function scheduleAnalysis() {
+  clearTimeout(analysisTimer);
+  analyser.cancel();
+  const mine = ++analysisToken;
+  hover = -1;
+  analysis = null;
+  if (!hintsWanted()) { renderHints(); return; }
+  analysis = { token: mine, player: game.turn, lines: [], depth: 0, nodes: 0, final: false };
+  renderHints();
+  analysisTimer = setTimeout(() => {
+    analyser.start(game, { n: settings.n, timeMs: ANALYSIS_MS }, (msg) => {
+      if (mine !== analysisToken || !analysis || msg.type === 'error') return;
+      analysis.lines = msg.lines ?? analysis.lines;
+      analysis.depth = msg.depth ?? analysis.depth;
+      analysis.nodes = msg.nodes ?? analysis.nodes;
+      analysis.final = msg.type === 'done';
+      renderHints();
+    });
+  }, ANALYSIS_DELAY);
+}
+
+const formatEval = (v) => {
+  if (Math.abs(v) > 90000) return v > 0 ? 'mate' : '−mate';
+  const x = v / 100;
+  return `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(x).toFixed(1)}`;
+};
+
+function squareCentre(idx) {
+  const [dx, dy] = toDisplay(xOf(idx), yOf(idx), currentView());
+  const cell = 800 / 14;
+  return [(dx + 0.5) * cell, (13 - dy + 0.5) * cell];
+}
+
+function renderHints() {
+  const a = analysis;
+  el.cands.innerHTML = '';
+  if (!a) {
+    el.searchInfo.textContent = 'off';
+    el.searchInfo.classList.remove('live');
+    el.hintSummary.textContent = game.result ? 'The game is over.' : 'Hints are off for this turn. Turn them on under Engine hints.';
+    drawArrows();
+    return;
+  }
+  const p = a.player;
+  el.hintSummary.innerHTML = `<b>${NAMES[p]}</b> to move${game.mode === 'teams' ? ` (with ${NAMES[(p + 2) & 3]})` : ''}`;
+  el.searchInfo.textContent = a.depth ? `${a.final ? 'depth' : 'searching'} ${a.depth} · ${a.nodes >= 1000 ? `${Math.round(a.nodes / 1000)}k` : a.nodes} nodes` : 'thinking…';
+  el.searchInfo.classList.toggle('live', !a.final);
+  if (!a.lines.length) {
+    for (let i = 0; i < Math.min(settings.n, legal.length); i++) el.cands.insertAdjacentHTML('beforeend', '<li class="cand skeleton"><span></span></li>');
+    drawArrows();
+    return;
+  }
+  a.lines.forEach((l, i) => {
+    const chipCls = l.delta > 0 ? 'up' : l.delta < 0 ? 'down' : 'flat';
+    const chip = l.delta > 0 ? `+${l.delta}` : l.delta < 0 ? `−${-l.delta}` : '±0';
+    const icons = (list) => list.map((c) => pieceImg(c.owner, c.type)).join('');
+    const pv = l.steps.map((s) => `<span class="pvd" style="--c:${COLORS[s.player]}"></span>${s.text}`).join(' ');
+    const li = document.createElement('li');
+    li.className = 'cand';
+    li.style.setProperty('--rank', RANK_COLORS[i % RANK_COLORS.length]);
+    li.innerHTML = `
+      <span class="cand-rank">${i + 1}</span>
+      <div class="cand-main">
+        <div class="cand-top">
+          <span class="cand-san">${l.steps[0].text}</span>
+          <span class="cand-eval mono" title="Evaluation from ${NAMES[p]}'s side: material and position, assuming everyone not on that side plays against it">${formatEval(l.value)}</span>
+        </div>
+        <div class="cand-material">
+          <span class="mat-chip ${chipCls}" title="Points ${NAMES[p]}'s side wins minus loses along this line">${chip}</span>
+          <span class="mat-text">${describeMaterial(l)}</span>
+          <span class="mat-pieces">
+            ${l.gained.length ? `<span class="gain">${icons(l.gained)}</span>` : ''}
+            ${l.lost.length ? `<span class="loss">${icons(l.lost)}</span>` : ''}
+          </span>
+        </div>
+        <div class="cand-pv mono">${pv}</div>
+      </div>`;
+    li.title = humanTurn() ? 'Click to play this move' : '';
+    li.addEventListener('mouseenter', () => { hover = i; drawArrows(); });
+    li.addEventListener('mouseleave', () => { hover = -1; drawArrows(); });
+    li.addEventListener('click', () => {
+      if (!humanTurn() || a.token !== analysisToken) return;
+      applyMove(l.move);
+    });
+    el.cands.append(li);
+  });
+  drawArrows();
+}
+
+function drawArrows() {
+  const a = analysis;
+  if (!a || !settings.arrows || !a.lines.length) { renderArrows(el.arrows, []); return; }
+  if (hover >= 0 && a.lines[hover]) {
+    const l = a.lines[hover];
+    renderArrows(el.arrows, l.steps.map((s, j) => {
+      const [x1, y1] = squareCentre(moveFrom(s.move));
+      const [x2, y2] = squareCentre(moveTo(s.move));
+      return { x1, y1, x2, y2, color: COLORS[s.player], width: j === 0 ? 13 : 9, opacity: Math.max(0.4, 0.9 - j * 0.1), label: String(j + 1) };
+    }));
+    return;
+  }
+  // weakest first so the best arrow ends up on top
+  renderArrows(el.arrows, [...a.lines].reverse().map((l) => {
+    const [x1, y1] = squareCentre(moveFrom(l.move));
+    const [x2, y2] = squareCentre(moveTo(l.move));
+    const i = l.rank - 1;
+    return { x1, y1, x2, y2, color: RANK_COLORS[i % RANK_COLORS.length], width: 13 - i, opacity: 0.85 - 0.08 * i, label: String(l.rank) };
+  }));
 }
 
 // ─────────────────────────── board ───────────────────────────
@@ -262,6 +464,7 @@ function renderBoard() {
       }
     }
   }
+  drawArrows();
 }
 
 function squareAt(clientX, clientY) {
@@ -275,10 +478,10 @@ function squareAt(clientX, clientY) {
 }
 
 el.board.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0 || !humanTurn()) return;
+  if (e.button !== 0 || !humanTurn() || !el.promo.hidden) return;
   const idx = squareAt(e.clientX, e.clientY);
   if (idx < 0) return;
-  if (selected !== null && targets.has(idx)) { applyMove(targets.get(idx)); return; }
+  if (selected !== null && targets.has(idx)) { chooseDestination(idx); return; }
   const piece = game.board[idx];
   if (piece && piece !== INVALID && pieceOwner(piece) === game.turn && legalBySquare.has(idx)) {
     e.preventDefault();
@@ -316,7 +519,7 @@ window.addEventListener('pointerup', (e) => {
   d.ghost?.remove();
   const idx = squareAt(e.clientX, e.clientY);
   if (d.active) {
-    if (idx >= 0 && targets.has(idx)) applyMove(targets.get(idx));
+    if (idx >= 0 && targets.has(idx)) chooseDestination(idx);
     else renderBoard();
   } else if (d.wasSelected && idx === d.from) {
     select(null);
@@ -438,7 +641,7 @@ function buildSeats() {
       save();
       buildSeats();
       renderAll();
-      if (game.turn === p) scheduleBot();
+      if (game.turn === p) { scheduleBot(); scheduleAnalysis(); }
     }));
     const range = row.querySelector('input');
     range.addEventListener('input', () => {
@@ -468,10 +671,26 @@ document.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('clic
 $('btnNew').onclick = startGame;
 $('viewSel').value = String(settings.view);
 $('viewSel').onchange = (e) => { settings.view = e.target.value; save(); renderBoard(); };
-$('inHints').checked = settings.hints;
-$('inHints').onchange = (e) => { settings.hints = e.target.checked; save(); renderBoard(); };
-$('inCoords').checked = settings.coords;
-$('inCoords').onchange = (e) => { settings.coords = e.target.checked; save(); renderBoard(); };
+for (const [id, key, after] of [
+  ['inHints', 'hints', () => renderBoard()],
+  ['inCoords', 'coords', () => renderBoard()],
+  ['inFfaChoice', 'ffaChoice', () => {}],
+  ['inHintsHuman', 'hintsHuman', () => scheduleAnalysis()],
+  ['inHintsBots', 'hintsBots', () => scheduleAnalysis()],
+  ['inArrows', 'arrows', () => drawArrows()],
+]) {
+  const input = $(id);
+  input.checked = settings[key];
+  input.onchange = () => { settings[key] = input.checked; save(); after(); };
+}
+$('inN').value = settings.n;
+$('outN').textContent = settings.n;
+$('inN').oninput = (e) => {
+  settings.n = Number(e.target.value);
+  $('outN').textContent = settings.n;
+  save();
+  scheduleAnalysis();
+};
 
 function rotate() {
   settings.view = String((currentView() + 1) % 4);
@@ -512,6 +731,26 @@ document.addEventListener('keydown', (e) => {
   if (fn) { e.preventDefault(); fn(); }
 });
 
+// Test hook: open four.html?debug and load an arbitrary position (see test scripts), bots paused.
+if (new URLSearchParams(location.search).has('debug')) {
+  window.fourDebug = {
+    load(state) {
+      clearTimeout(botTimer);
+      botToken++;
+      game = state;
+      log = [];
+      paused = true;
+      selected = null;
+      targets = new Map();
+      hidePromotion();
+      refreshLegal();
+      renderAll();
+      scheduleAnalysis();
+    },
+    get game() { return game; },
+  };
+}
+
 // ─────────────────────────── boot ───────────────────────────
 syncMode();
 buildSeats();
@@ -519,6 +758,7 @@ loadPieceImages().then(() => {
   refreshLegal();
   renderAll();
   scheduleBot();
+  scheduleAnalysis();
 }).catch((err) => {
   console.error(err);
   toast('Could not load the piece images. Open the page through start.bat / node server.js.');

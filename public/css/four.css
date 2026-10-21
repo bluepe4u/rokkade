@@ -88,3 +88,13 @@ select.input { font-size: 13px; padding: 9px 12px; }
 @media (max-width: 900px) {
   .brand-name { display: none; }
 }
+
+/* ───── engine hints ───── */
+.fboard + .board-arrows { border-radius: 0; }
+.cand .pvd { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--c); margin: 0 4px 0 6px; vertical-align: 1px; }
+.cand .pvd:first-child { margin-left: 0; }
+.cand-pv { white-space: normal; overflow: visible; line-height: 1.6; }
+.candidates .cand-eval { margin-left: auto; font-weight: 600; color: var(--rank); font-size: 14px; }
+.cand .mat-pieces img { width: 18px; height: 18px; }
+.hint-off { list-style: none; color: var(--muted-foreground); padding: 14px; text-align: center; border: 1px dashed var(--border); border-radius: 14px; }
+.promo button img { image-rendering: auto; }

@@ -8,8 +8,10 @@
 // Rules implemented
 //  - Pieces move as in chess; pawns advance toward the opposite side (Red up, Blue right,
 //    Yellow down, Green left) and capture diagonally forward. Double step from the start row.
-//  - Promotion (always to a queen) on the 8th rank in FFA and the 11th rank in Teams. A
-//    promoted queen is worth 1 point when captured.
+//  - Promotion on the 8th rank in FFA and the 11th rank in Teams. FFA promotes automatically to
+//    a queen (chess.com's rated rule); Teams lets the player choose queen, rook, bishop or knight.
+//    FFA can optionally let you choose as well (`choosePromotion`). Any promoted piece is worth
+//    1 point when captured.
 //  - Castling (king two squares toward either rook, the rook hops over). No en passant.
 //  - A move may not leave your own king attacked by any enemy (everyone in FFA; the other
 //    team in Teams). Live kings are never captured: checkmate is declared on the mated
@@ -40,6 +42,8 @@ export const INVALID = 255;
 const PROMOTED = 32;
 
 export const FLAG_PROMOTION = 1;
+export const FLAG_PROMO_SHIFT = 3; // the chosen piece type lives in flag bits 3-5
+const PROMO_CHOICES = [QUEEN, ROOK, BISHOP, KNIGHT];
 export const FLAG_CASTLE_K = 2;
 export const FLAG_CASTLE_Q = 4;
 
@@ -133,11 +137,12 @@ const CASTLE = [0, 1, 2, 3].map((p) => [
 // ───────────────────────── pieces ─────────────────────────
 export const pieceType = (v) => v & 7;
 export const pieceOwner = (v) => (v >> 3) & 3;
-export const isPromotedQueen = (v) => (v & PROMOTED) !== 0;
+export const isPromoted = (v) => (v & PROMOTED) !== 0;
+export const isPromotedQueen = (v) => (v & PROMOTED) !== 0 && (v & 7) === QUEEN;
 export const makePiece = (type, owner, promoted = false) => type | (owner << 3) | (promoted ? PROMOTED : 0);
 
 // ───────────────────────── state ─────────────────────────
-export function newGame(mode = 'ffa') {
+export function newGame(mode = 'ffa', { choosePromotion = false } = {}) {
   const board = new Uint8Array(CELLS);
   for (let i = 0; i < CELLS; i++) board[i] = isValidSquare(i) ? 0 : INVALID;
   const kingSq = [0, 0, 0, 0];
@@ -151,13 +156,14 @@ export function newGame(mode = 'ffa') {
   const state = {
     mode, board, turn: 0, eliminated: [false, false, false, false], score: [0, 0, 0, 0],
     castle: 0xff, kingSq, halfmove: 0, ply: 0, result: null, seen: new Map(), lastMove: null,
+    choosePromotion: mode === 'teams' || choosePromotion,
   };
   state.seen.set(positionKey(state), 1);
   return state;
 }
 
 /** Build a state from a list of [x, y, type, owner] (for tests and puzzles). */
-export function fromPieces(list, { mode = 'ffa', turn = 0, castle = 0, eliminated = [false, false, false, false] } = {}) {
+export function fromPieces(list, { mode = 'ffa', turn = 0, castle = 0, eliminated = [false, false, false, false], choosePromotion = false } = {}) {
   const board = new Uint8Array(CELLS);
   for (let i = 0; i < CELLS; i++) board[i] = isValidSquare(i) ? 0 : INVALID;
   const kingSq = [-1, -1, -1, -1];
@@ -168,6 +174,7 @@ export function fromPieces(list, { mode = 'ffa', turn = 0, castle = 0, eliminate
   const state = {
     mode, board, turn, eliminated: [...eliminated], score: [0, 0, 0, 0], castle, kingSq,
     halfmove: 0, ply: 0, result: null, seen: new Map(), lastMove: null,
+    choosePromotion: mode === 'teams' || choosePromotion,
   };
   state.seen.set(positionKey(state), 1);
   return state;
@@ -178,6 +185,7 @@ export function cloneState(s) {
     mode: s.mode, board: s.board.slice(), turn: s.turn, eliminated: [...s.eliminated], score: [...s.score],
     castle: s.castle, kingSq: [...s.kingSq], halfmove: s.halfmove, ply: s.ply,
     result: s.result ? { ...s.result } : null, seen: new Map(s.seen), lastMove: s.lastMove ? { ...s.lastMove } : null,
+    choosePromotion: s.choosePromotion,
   };
 }
 
@@ -185,13 +193,14 @@ export function cloneState(s) {
 export function serialize(s) {
   return {
     mode: s.mode, board: s.board, turn: s.turn, eliminated: s.eliminated, score: s.score,
-    castle: s.castle, kingSq: s.kingSq, halfmove: s.halfmove, ply: s.ply,
+    castle: s.castle, kingSq: s.kingSq, halfmove: s.halfmove, ply: s.ply, choosePromotion: s.choosePromotion,
   };
 }
 export function deserialize(o) {
   return {
     mode: o.mode, board: Uint8Array.from(o.board), turn: o.turn, eliminated: [...o.eliminated], score: [...o.score],
     castle: o.castle, kingSq: [...o.kingSq], halfmove: o.halfmove, ply: o.ply, result: null, seen: new Map(), lastMove: null,
+    choosePromotion: !!o.choosePromotion,
   };
 }
 
@@ -302,6 +311,13 @@ export const moveTo = (m) => (m >> 8) & 255;
 export const moveFlags = (m) => m >> 16;
 const mv = (from, to, flags = 0) => from | (to << 8) | (flags << 16);
 
+export const promotionPiece = (m) => (((m >> 16) >> FLAG_PROMO_SHIFT) & 7) || QUEEN;
+
+function pushPawnMove(out, state, from, to, promoting) {
+  if (!promoting) { out.push(mv(from, to)); return; }
+  for (const t of state.choosePromotion ? PROMO_CHOICES : [QUEEN]) out.push(mv(from, to, FLAG_PROMOTION | (t << FLAG_PROMO_SHIFT)));
+}
+
 export function pseudoMoves(state, p, out = []) {
   const b = state.board;
   for (let idx = 0; idx < CELLS; idx++) {
@@ -315,9 +331,9 @@ export function pseudoMoves(state, p, out = []) {
       const nx = x + fx;
       const ny = y + fy;
       if (inBoard(nx, ny) && !b[sq(nx, ny)]) {
-        const flag = isPromotionSquare(p, state.mode, nx, ny) ? FLAG_PROMOTION : 0;
-        out.push(mv(idx, sq(nx, ny), flag));
-        if (!flag && onStartRow(p, x, y)) {
+        const promoting = isPromotionSquare(p, state.mode, nx, ny);
+        pushPawnMove(out, state, idx, sq(nx, ny), promoting);
+        if (!promoting && onStartRow(p, x, y)) {
           const mx = x + 2 * fx;
           const my = y + 2 * fy;
           if (inBoard(mx, my) && !b[sq(mx, my)]) out.push(mv(idx, sq(mx, my)));
@@ -329,7 +345,7 @@ export function pseudoMoves(state, p, out = []) {
         if (!inBoard(cx, cy)) continue;
         const target = b[sq(cx, cy)];
         if (target && canCapture(state, p, target)) {
-          out.push(mv(idx, sq(cx, cy), isPromotionSquare(p, state.mode, cx, cy) ? FLAG_PROMOTION : 0));
+          pushPawnMove(out, state, idx, sq(cx, cy), isPromotionSquare(p, state.mode, cx, cy));
         }
       }
     } else if (t === KNIGHT || t === KING) {
@@ -382,7 +398,7 @@ export function makeMove(state, m) {
     b[c.rookFrom] = 0;
   } else {
     b[from] = 0;
-    b[to] = flags & FLAG_PROMOTION ? makePiece(QUEEN, p, true) : piece;
+    b[to] = flags & FLAG_PROMOTION ? makePiece(((flags >> FLAG_PROMO_SHIFT) & 7) || QUEEN, p, true) : piece;
   }
   if (type === KING) {
     state.kingSq[p] = to;
@@ -438,8 +454,10 @@ export function legalMoves(state, p = state.turn) {
   return out;
 }
 
-export function findMove(state, from, to) {
-  return legalMoves(state).find((m) => moveFrom(m) === from && moveTo(m) === to) ?? null;
+/** The legal move from -> to; for a promotion, the one choosing `promo` (default queen). */
+export function findMove(state, from, to, promo = QUEEN) {
+  return legalMoves(state).find((m) => moveFrom(m) === from && moveTo(m) === to
+    && (!(moveFlags(m) & FLAG_PROMOTION) || promotionPiece(m) === promo)) ?? null;
 }
 
 // ───────────────────────── game flow ─────────────────────────
@@ -455,12 +473,13 @@ export const activePlayers = (state) => [0, 1, 2, 3].filter((p) => !state.elimin
 
 export function captureValue(state, v) {
   if (!v || v === INVALID || state.eliminated[pieceOwner(v)]) return 0;
+  if (isPromoted(v)) return 1; // a promoted piece of any kind is worth a pawn
   switch (pieceType(v)) {
     case PAWN: return 1;
     case KNIGHT: return 3;
     case BISHOP: return 5;
     case ROOK: return 5;
-    case QUEEN: return isPromotedQueen(v) ? 1 : 9;
+    case QUEEN: return isPromoted(v) ? 1 : 9;
     default: return 0;
   }
 }
@@ -468,7 +487,7 @@ export function captureValue(state, v) {
 export function moveText(piece, from, to, captured, flags) {
   if (flags & FLAG_CASTLE_K) return 'O-O';
   if (flags & FLAG_CASTLE_Q) return 'O-O-O';
-  return `${TYPE_LETTER[pieceType(piece)]}${squareName(from)}${captured ? 'x' : '-'}${squareName(to)}${flags & FLAG_PROMOTION ? '=Q' : ''}`;
+  return `${TYPE_LETTER[pieceType(piece)]}${squareName(from)}${captured ? 'x' : '-'}${squareName(to)}${flags & FLAG_PROMOTION ? `=${TYPE_LETTER[((flags >> FLAG_PROMO_SHIFT) & 7) || QUEEN]}` : ''}`;
 }
 
 function insufficientMaterial(state) {

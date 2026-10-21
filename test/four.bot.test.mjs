@@ -61,3 +61,53 @@ test('the worker message round trip yields the same move as a direct call', () =
   const viaWire = chooseMove(deserialize(JSON.parse(JSON.stringify({ ...serialize(g), board: [...g.board] }))), 2, { rng: first });
   assert.equal(direct.move, viaWire.move);
 });
+
+import { analyse, describeMaterial } from '../public/js/four/bot.js';
+import { pieceType, makeMove, unmakeMove, FLAG_PROMOTION } from '../public/js/four/rules.js';
+
+test('analyse: the top n moves, best first, each with a principal variation', () => {
+  const g = fromPieces([...KINGS, [7, 3, ROOK, 0], [7, 6, QUEEN, 1], [3, 3, KNIGHT, 0]]);
+  const snapshot = g.board.slice();
+  const r = analyse(g, { n: 3, timeMs: 400, maxDepth: 4 });
+  assert.deepEqual([...g.board], [...snapshot], 'analysis leaves the position untouched');
+  assert.ok(r.lines.length === 3 && r.depth >= 2);
+  assert.deepEqual(r.lines.map((l) => l.rank), [1, 2, 3]);
+  for (let i = 1; i < r.lines.length; i++) assert.ok(r.lines[i - 1].value >= r.lines[i].value);
+  const top = r.lines[0];
+  assert.deepEqual([moveFrom(top.move), moveTo(top.move)], [sq(7, 3), sq(7, 6)], 'best move takes the free queen');
+  assert.equal(top.line[0], top.move);
+  assert.ok(top.line.length >= 2, 'the principal variation continues past the first move');
+  assert.equal(top.steps[0].text, 'Rh4xh7');
+  assert.equal(top.gain, 9);
+  assert.equal(describeMaterial(top), 'Wins a queen');
+  // every line is playable from the position
+  for (const l of r.lines) {
+    const undos = l.line.map((m) => makeMove(g, m));
+    while (undos.length) unmakeMove(g, undos.pop());
+  }
+  assert.deepEqual([...g.board], [...snapshot]);
+});
+
+test('analyse: reports every depth, and finds a forced checkmate in Teams', () => {
+  const g = fromPieces([[7, 0, KING, 0], [0, 3, KING, 1], [7, 13, KING, 2], [13, 7, KING, 3], [5, 3, ROOK, 0], [5, 10, ROOK, 0]], { mode: 'teams' });
+  const depths = [];
+  const r = analyse(g, { n: 2, timeMs: 600, maxDepth: 5, onDepth: (d) => depths.push(d.depth) });
+  assert.deepEqual(depths, [...depths].sort((a, b) => a - b));
+  assert.deepEqual([moveFrom(r.lines[0].move), moveTo(r.lines[0].move)], [sq(5, 10), sq(5, 4)]);
+  assert.ok(r.lines[0].value > 90000, 'a mate score');
+});
+
+test('describeMaterial wording', () => {
+  assert.equal(describeMaterial({ gained: [], lost: [], delta: 0 }), 'No material change');
+  assert.equal(describeMaterial({ gained: [{ type: 2 }], lost: [{ type: 2 }], delta: 0 }), 'Even trade');
+  assert.equal(describeMaterial({ gained: [{ type: 2 }], lost: [], delta: 3 }), 'Wins a knight');
+  assert.equal(describeMaterial({ gained: [{ type: 5 }], lost: [{ type: 4 }], delta: 4 }), 'Wins 4 points');
+  assert.equal(describeMaterial({ gained: [], lost: [{ type: 4 }], delta: -5 }), 'Loses a rook');
+});
+
+test('analyse: in Teams a partner\'s captures count for the player to move', () => {
+  // Red to move; the only capture in the line is Yellow's (Red's partner) after Red's quiet move.
+  const g = fromPieces([...KINGS, [7, 3, ROOK, 0], [7, 6, QUEEN, 1]], { mode: 'teams' });
+  const r = analyse(g, { n: 1, timeMs: 300, maxDepth: 3 });
+  assert.equal(r.lines[0].gain, 9);
+});
