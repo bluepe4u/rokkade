@@ -10,7 +10,7 @@ import { renderArrows } from '../arrows.js';
 const STORE_KEY = 'sfet.four.v1';
 const DEFAULTS = {
   mode: 'ffa', ctrl: ['human', 'bot', 'bot', 'bot'], level: [3, 3, 3, 3], view: 'auto', hints: true, coords: true,
-  n: 3, hintsHuman: true, hintsBots: false, arrows: true, ffaChoice: false,
+  n: 3, hintsHuman: true, hintsBots: false, arrows: true, ffaChoice: false, setup: 'standard',
 };
 const COLORS = ['#d9473f', '#3f7fd9', '#e3b72c', '#3fa65a'];
 const RANK_COLORS = ['#3f9a63', '#3d7fd1', '#c98a2e', '#a65e46', '#8a63c9'];
@@ -137,7 +137,7 @@ const runner = new BotRunner();
 const analyser = new Analyser();
 
 // ─────────────────────────── game state ───────────────────────────
-let game = newGame(settings.mode, { choosePromotion: settings.ffaChoice });
+let game = newGame(settings.mode, { choosePromotion: settings.ffaChoice, setup: settings.setup });
 let log = [];             // move events
 let legal = [];           // legal moves for the player to move
 let legalBySquare = new Map();
@@ -182,7 +182,7 @@ function select(idx) {
 function startGame() {
   clearTimeout(botTimer);
   botToken++;
-  game = newGame(settings.mode, { choosePromotion: settings.ffaChoice });
+  game = newGame(settings.mode, { choosePromotion: settings.ffaChoice, setup: settings.setup });
   log = [];
   selected = null;
   targets = new Map();
@@ -669,6 +669,8 @@ document.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('clic
 }));
 
 $('btnNew').onclick = startGame;
+$('setupSel').value = settings.setup;
+$('setupSel').onchange = (e) => { settings.setup = e.target.value; save(); startGame(); };
 $('viewSel').value = String(settings.view);
 $('viewSel').onchange = (e) => { settings.view = e.target.value; save(); renderBoard(); };
 for (const [id, key, after] of [

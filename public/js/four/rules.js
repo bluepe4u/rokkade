@@ -13,6 +13,7 @@
 //    FFA can optionally let you choose as well (`choosePromotion`). Any promoted piece is worth
 //    1 point when captured.
 //  - Castling (king two squares toward either rook, the rook hops over). No en passant.
+//  - Starting position: chess.com's Old Standard by default; the Omatamix setup is available (see SETUPS).
 //  - A move may not leave your own king attacked by any enemy (everyone in FFA; the other
 //    team in Teams). Live kings are never captured: checkmate is declared on the mated
 //    player's own turn.
@@ -94,8 +95,21 @@ const PAWN_SRC = [0, 1, 2, 3].map((q) => Array.from({ length: CELLS }, (_, i) =>
   return out;
 }));
 
-const BACK_ORDER = [ROOK, KNIGHT, BISHOP, QUEEN, KING, BISHOP, KNIGHT, ROOK];
-/** k-th square (0..7) of player p's back rank, in the same piece order for everyone (R N B Q K B N R). */
+const ORDER_QK = [ROOK, KNIGHT, BISHOP, QUEEN, KING, BISHOP, KNIGHT, ROOK];
+const ORDER_KQ = [ROOK, KNIGHT, BISHOP, KING, QUEEN, BISHOP, KNIGHT, ROOK];
+/**
+ * Back-rank piece order per player, listed along backSquare(p, k) for k = 0..7.
+ *  standard  chess.com's "Old Standard": all four kings on light squares and each king facing the
+ *            opposing queen. Red K h1 / Q g1, Yellow K g14 / Q h14, Blue K a8 / Q a7, Green K n7 / Q n8.
+ *  omatamix  the "Omatamix" setup: Blue and Green swap king and queen (their kings on dark squares),
+ *            which makes the whole position symmetric under a quarter turn. Blue K a7 / Q a8, Green K n8 / Q n7.
+ */
+export const SETUPS = {
+  standard: [ORDER_QK, ORDER_KQ, ORDER_QK, ORDER_KQ],
+  omatamix: [ORDER_QK, ORDER_QK, ORDER_QK, ORDER_QK],
+};
+const KING_K = Object.fromEntries(Object.entries(SETUPS).map(([name, orders]) => [name, orders.map((o) => o.indexOf(KING))]));
+/** k-th square (0..7) of player p's back rank (k runs along the rank in the player's own order, see SETUPS). */
 export function backSquare(p, k) {
   switch (p) {
     case 0: return sq(3 + k, 0);
@@ -123,16 +137,20 @@ const isPromotionSquare = (p, mode, x, y) => {
   return p === 0 || p === 2 ? y === line : x === line;
 };
 
-const CASTLE = [0, 1, 2, 3].map((p) => [
-  { // king side: toward the rook on k=7
-    kingTo: backSquare(p, 6), rookFrom: backSquare(p, 7), rookTo: backSquare(p, 5),
-    empty: [backSquare(p, 5), backSquare(p, 6)], safe: [backSquare(p, 4), backSquare(p, 5), backSquare(p, 6)],
-  },
-  { // queen side: toward the rook on k=0
-    kingTo: backSquare(p, 2), rookFrom: backSquare(p, 0), rookTo: backSquare(p, 3),
-    empty: [backSquare(p, 1), backSquare(p, 2), backSquare(p, 3)], safe: [backSquare(p, 4), backSquare(p, 3), backSquare(p, 2)],
-  },
-]);
+/** Castling per setup, player and side (0: toward the rook on k=7, 1: toward the rook on k=0): the king
+ *  moves two squares toward the rook and the rook hops to the square the king crossed. */
+function castleDefs(setup) {
+  return [0, 1, 2, 3].map((p) => {
+    const kk = KING_K[setup][p];
+    const at = (k) => backSquare(p, k);
+    const span = (from, to) => { const out = []; for (let k = from; k <= to; k++) out.push(at(k)); return out; };
+    return [
+      { kingTo: at(kk + 2), rookFrom: at(7), rookTo: at(kk + 1), empty: span(kk + 1, 6), safe: [at(kk), at(kk + 1), at(kk + 2)] },
+      { kingTo: at(kk - 2), rookFrom: at(0), rookTo: at(kk - 1), empty: span(1, kk - 1), safe: [at(kk), at(kk - 1), at(kk - 2)] },
+    ];
+  });
+}
+const CASTLE = { standard: castleDefs('standard'), omatamix: castleDefs('omatamix') };
 
 // ───────────────────────── pieces ─────────────────────────
 export const pieceType = (v) => v & 7;
@@ -142,28 +160,29 @@ export const isPromotedQueen = (v) => (v & PROMOTED) !== 0 && (v & 7) === QUEEN;
 export const makePiece = (type, owner, promoted = false) => type | (owner << 3) | (promoted ? PROMOTED : 0);
 
 // ───────────────────────── state ─────────────────────────
-export function newGame(mode = 'ffa', { choosePromotion = false } = {}) {
+export function newGame(mode = 'ffa', { choosePromotion = false, setup = 'standard' } = {}) {
+  if (!SETUPS[setup]) throw new Error(`unknown setup ${setup}`);
   const board = new Uint8Array(CELLS);
   for (let i = 0; i < CELLS; i++) board[i] = isValidSquare(i) ? 0 : INVALID;
   const kingSq = [0, 0, 0, 0];
   for (let p = 0; p < 4; p++) {
     for (let k = 0; k < 8; k++) {
-      board[backSquare(p, k)] = makePiece(BACK_ORDER[k], p);
+      board[backSquare(p, k)] = makePiece(SETUPS[setup][p][k], p);
       board[pawnSquare(p, k)] = makePiece(PAWN, p);
     }
-    kingSq[p] = backSquare(p, 4);
+    kingSq[p] = backSquare(p, KING_K[setup][p]);
   }
   const state = {
     mode, board, turn: 0, eliminated: [false, false, false, false], score: [0, 0, 0, 0],
     castle: 0xff, kingSq, halfmove: 0, ply: 0, result: null, seen: new Map(), lastMove: null,
-    choosePromotion: mode === 'teams' || choosePromotion,
+    choosePromotion: mode === 'teams' || choosePromotion, setup,
   };
   state.seen.set(positionKey(state), 1);
   return state;
 }
 
 /** Build a state from a list of [x, y, type, owner] (for tests and puzzles). */
-export function fromPieces(list, { mode = 'ffa', turn = 0, castle = 0, eliminated = [false, false, false, false], choosePromotion = false } = {}) {
+export function fromPieces(list, { mode = 'ffa', turn = 0, castle = 0, eliminated = [false, false, false, false], choosePromotion = false, setup = 'standard' } = {}) {
   const board = new Uint8Array(CELLS);
   for (let i = 0; i < CELLS; i++) board[i] = isValidSquare(i) ? 0 : INVALID;
   const kingSq = [-1, -1, -1, -1];
@@ -174,7 +193,7 @@ export function fromPieces(list, { mode = 'ffa', turn = 0, castle = 0, eliminate
   const state = {
     mode, board, turn, eliminated: [...eliminated], score: [0, 0, 0, 0], castle, kingSq,
     halfmove: 0, ply: 0, result: null, seen: new Map(), lastMove: null,
-    choosePromotion: mode === 'teams' || choosePromotion,
+    choosePromotion: mode === 'teams' || choosePromotion, setup,
   };
   state.seen.set(positionKey(state), 1);
   return state;
@@ -185,7 +204,7 @@ export function cloneState(s) {
     mode: s.mode, board: s.board.slice(), turn: s.turn, eliminated: [...s.eliminated], score: [...s.score],
     castle: s.castle, kingSq: [...s.kingSq], halfmove: s.halfmove, ply: s.ply,
     result: s.result ? { ...s.result } : null, seen: new Map(s.seen), lastMove: s.lastMove ? { ...s.lastMove } : null,
-    choosePromotion: s.choosePromotion,
+    choosePromotion: s.choosePromotion, setup: s.setup,
   };
 }
 
@@ -193,14 +212,14 @@ export function cloneState(s) {
 export function serialize(s) {
   return {
     mode: s.mode, board: s.board, turn: s.turn, eliminated: s.eliminated, score: s.score,
-    castle: s.castle, kingSq: s.kingSq, halfmove: s.halfmove, ply: s.ply, choosePromotion: s.choosePromotion,
+    castle: s.castle, kingSq: s.kingSq, halfmove: s.halfmove, ply: s.ply, choosePromotion: s.choosePromotion, setup: s.setup,
   };
 }
 export function deserialize(o) {
   return {
     mode: o.mode, board: Uint8Array.from(o.board), turn: o.turn, eliminated: [...o.eliminated], score: [...o.score],
     castle: o.castle, kingSq: [...o.kingSq], halfmove: o.halfmove, ply: o.ply, result: null, seen: new Map(), lastMove: null,
-    choosePromotion: !!o.choosePromotion,
+    choosePromotion: !!o.choosePromotion, setup: o.setup || 'standard',
   };
 }
 
@@ -366,10 +385,10 @@ export function pseudoMoves(state, p, out = []) {
   }
   // castling
   const king = state.kingSq[p];
-  if (king === backSquare(p, 4) && b[king] === makePiece(KING, p)) {
+  if (king === backSquare(p, KING_K[state.setup][p]) && b[king] === makePiece(KING, p)) {
     for (let side = 0; side < 2; side++) {
       if (!(state.castle & (1 << (2 * p + side)))) continue;
-      const c = CASTLE[p][side];
+      const c = CASTLE[state.setup][p][side];
       if (b[c.rookFrom] !== makePiece(ROOK, p)) continue;
       if (c.empty.some((s) => b[s])) continue;
       if (c.safe.some((s) => attackedBy(state, s, p))) continue;
@@ -391,7 +410,7 @@ export function makeMove(state, m) {
   const type = piece & 7;
   const undo = { m, piece, captured, castle: state.castle, halfmove: state.halfmove };
   if (flags & (FLAG_CASTLE_K | FLAG_CASTLE_Q)) {
-    const c = CASTLE[p][flags & FLAG_CASTLE_K ? 0 : 1];
+    const c = CASTLE[state.setup][p][flags & FLAG_CASTLE_K ? 0 : 1];
     b[from] = 0;
     b[to] = piece;
     b[c.rookTo] = b[c.rookFrom];
@@ -404,13 +423,13 @@ export function makeMove(state, m) {
     state.kingSq[p] = to;
     state.castle &= ~(3 << (2 * p));
   } else if (type === ROOK) {
-    if (from === CASTLE[p][1].rookFrom) state.castle &= ~(1 << (2 * p + 1));
-    else if (from === CASTLE[p][0].rookFrom) state.castle &= ~(1 << (2 * p));
+    if (from === CASTLE[state.setup][p][1].rookFrom) state.castle &= ~(1 << (2 * p + 1));
+    else if (from === CASTLE[state.setup][p][0].rookFrom) state.castle &= ~(1 << (2 * p));
   }
   if (captured && (captured & 7) === ROOK) {
     const o = (captured >> 3) & 3;
-    if (to === CASTLE[o][1].rookFrom) state.castle &= ~(1 << (2 * o + 1));
-    else if (to === CASTLE[o][0].rookFrom) state.castle &= ~(1 << (2 * o));
+    if (to === CASTLE[state.setup][o][1].rookFrom) state.castle &= ~(1 << (2 * o + 1));
+    else if (to === CASTLE[state.setup][o][0].rookFrom) state.castle &= ~(1 << (2 * o));
   }
   state.halfmove = type === PAWN || captured ? 0 : state.halfmove + 1;
   state.ply++;
@@ -425,7 +444,7 @@ export function unmakeMove(state, undo) {
   const b = state.board;
   const p = (piece >> 3) & 3;
   if (flags & (FLAG_CASTLE_K | FLAG_CASTLE_Q)) {
-    const c = CASTLE[p][flags & FLAG_CASTLE_K ? 0 : 1];
+    const c = CASTLE[state.setup][p][flags & FLAG_CASTLE_K ? 0 : 1];
     b[from] = piece;
     b[to] = 0;
     b[c.rookFrom] = b[c.rookTo];
