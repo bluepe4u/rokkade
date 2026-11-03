@@ -54,7 +54,7 @@ for (const g of sample) {
 const mae = (p) => rows.reduce((s, r) => s + Math.abs(paramAccuracy(r.loss, r.side, p) - r.ref), 0) / rows.length;
 const bias = (p) => rows.reduce((s, r) => s + (paramAccuracy(r.loss, r.side, p) - r.ref), 0) / rows.length;
 let best = null;
-for (let k = 0.2; k <= 1.6001; k += 0.02) {
+for (let k = 0.2; k <= 3.0001; k += 0.02) {
   for (let w = 0; w <= 1.0001; w += 0.05) {
     for (const b of [0, 4, 8, 12]) {
       const p = { k: +k.toFixed(2), w: +w.toFixed(2), b };

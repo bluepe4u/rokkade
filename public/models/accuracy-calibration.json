@@ -1,0 +1,61 @@
+{
+  "k": 1.68,
+  "w": 0.2,
+  "b": 0,
+  "depth": 12,
+  "n": 250,
+  "games": 125,
+  "date": "2026-11-03",
+  "mae": 4.66,
+  "maeDefault": 7.64,
+  "biasDefault": 4.69,
+  "bias": 1.17,
+  "byBand": [
+    {
+      "band": "0-800",
+      "n": 51,
+      "chesscom": 61.81,
+      "ours": 66.58,
+      "fitted": 66.53,
+      "maeDefault": 9.08,
+      "maeFitted": 6.38
+    },
+    {
+      "band": "800-1200",
+      "n": 50,
+      "chesscom": 69.46,
+      "ours": 76.08,
+      "fitted": 71.7,
+      "maeDefault": 10.35,
+      "maeFitted": 5.12
+    },
+    {
+      "band": "1200-1600",
+      "n": 45,
+      "chesscom": 77.23,
+      "ours": 81.29,
+      "fitted": 77.35,
+      "maeDefault": 6.94,
+      "maeFitted": 4.3
+    },
+    {
+      "band": "1600-2000",
+      "n": 45,
+      "chesscom": 80.91,
+      "ours": 84.12,
+      "fitted": 79.82,
+      "maeDefault": 6.13,
+      "maeFitted": 3.48
+    },
+    {
+      "band": "2000-4000",
+      "n": 59,
+      "chesscom": 83.26,
+      "ours": 87.83,
+      "fitted": 83.01,
+      "maeDefault": 5.77,
+      "maeFitted": 3.95
+    }
+  ],
+  "source": "Public chess.com games (blitz and rapid) sampled across rating bands; reviewed with Stockfish 19 lite."
+}
