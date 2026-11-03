@@ -143,7 +143,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 def main():
     url = f"http://localhost:{PORT}/"
     with http.server.ThreadingHTTPServer(("127.0.0.1", PORT), functools.partial(Handler, directory=str(ROOT))) as httpd:
-        print(f"\n  Stockfish Elo Terminal running at {url}\n  Press Ctrl+C to stop.\n")
+        print(f"\n  Outpost running at {url}\n  Press Ctrl+C to stop.\n")
         if not os.environ.get("NO_OPEN"):
             webbrowser.open(url)
         try:

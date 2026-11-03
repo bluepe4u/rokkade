@@ -1,5 +1,10 @@
-// Coach page: section router, account bar, Discoveries inbox, Games and Guide.
-import { coach, bindBadge } from './service.js';
+// Outpost (coach.html): section router, account bar, Discoveries inbox, Games and Plan.
+import { coach } from './service.js';
+import { setActive, GROUP_OF } from '../shell.js';
+import { renderToday } from './today.js';
+import { renderPuzzles, puzzleSessionActive } from './puzzleview.js';
+import { renderProgress } from './progressview.js';
+import { puzzleQueue } from './puzzles.js';
 import { $, $$, esc, miniBoard, countUp, ring, toast, since, when, stagger } from './ui.js';
 import { fenOf } from './discoveries.js';
 import { moveLabel, sanLine, positionAfter } from './library.js';
@@ -16,26 +21,18 @@ const bindFilters = (root, redraw) => fBind(S, root, redraw);
 
 const C = coach();
 const view = $('#view');
-const SECTIONS = ['discoveries', 'library', 'games', 'review', 'insights', 'guide'];
+const SECTIONS = ['today', 'discoveries', 'library', 'puzzles', 'games', 'review', 'insights', 'progress', 'plan', 'guide'];
 export const S = {
   f: { tc: 'all', col: 'all', per: 'all', rated: 'all', ...ls.get('coach-f', {}) },
   disc: { side: 'all', show: 'todo', ...ls.get('sfet.coach.discFilter', {}) },
-  an: {},
+  get an() { return C.an; },
   syncing: false,
   syncMsg: '',
   syncErr: '',
 };
 export const coachState = S;
 
-// ───────────────────────── theme & chrome ─────────────────────────
-$('#themeBtn').addEventListener('click', () => {
-  const root = document.documentElement;
-  const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
-  root.dataset.theme = dark ? 'light' : 'dark';
-  try { localStorage.setItem('sfet.theme', root.dataset.theme); } catch { /* ignore */ }
-});
-$$('[data-badge]').forEach(bindBadge);
-
+// ───────────────────────── chrome ─────────────────────────
 function moveInk() {
   const cur = $('#subnav a[aria-current="page"]');
   const ink = $('.subnav-ink');
@@ -45,18 +42,36 @@ function moveInk() {
 }
 addEventListener('resize', moveInk);
 
+const ago = (ms) => { const m = Math.round((Date.now() - ms) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
 function renderAccount() {
   const el = $('#account');
   if (!C.user) { el.innerHTML = `<a class="btn sm" href="#games">Connect chess.com</a>`; return; }
+  const last = Number(ls.get('sfet.lastSync', 0));
   el.innerHTML = `<span class="who"><i>${esc(C.user[0].toUpperCase())}</i>${esc(C.user)}</span>
-    <button class="btn sm" id="accSync" ${S.syncing ? 'disabled' : ''}>${S.syncing ? 'Syncing…' : 'Sync games'}</button>`;
+    <button class="btn sm" id="accSync" ${S.syncing ? 'disabled' : ''} title="${C.autoSyncMinutes() ? `Updates automatically every ${C.autoSyncMinutes() >= 60 ? `${C.autoSyncMinutes() / 60} h` : `${C.autoSyncMinutes()} min`}` : 'Automatic updates are off'}">${S.syncing ? '<span class="ring spin sm"></span>Syncing…' : `↻ ${last ? ago(last) : 'Sync'}`}</button>`;
   $('#accSync').onclick = () => sync(C.user);
+}
+setInterval(() => { if (!S.syncing) renderAccount(); }, 60000);
+
+function paintDue() {
+  const b = $('#dueBadge');
+  if (!b) return;
+  const n = C.due().length;
+  b.textContent = n ? String(n) : '';
+  b.hidden = !n;
+  const pb = $('#pzBadge');
+  if (pb) { const m = puzzleQueue(C.puzzles(), C.prog).length; pb.textContent = m ? String(m) : ''; pb.hidden = !m; }
 }
 
 function renderBg() {
+  paintDue();
   const el = $('#bgStatus');
   const p = C.progress;
-  if (p && p.stage !== 'done') {
+  if (p && p.kind === 'review') {
+    const rp = C.reviewProgress();
+    el.innerHTML = `<span class="bg-pill">${ring(p.i / p.n)}<span>Reviewing games · ${rp.done + 1} of ${rp.total}</span></span>`;
+    el.querySelector('.ring').classList.add('spin');
+  } else if (p && p.stage !== 'done') {
     const it = C.get(p.id);
     const label = it ? it.label : '';
     const d = p.stage === 'main' ? `depth ${p.depth || 0}/${C.depth.main}` : p.stage === 'reply' ? `your ${p.san}` : `engine line`;
@@ -64,7 +79,10 @@ function renderBg() {
     el.querySelector('.ring').classList.add('spin');
   } else {
     const waiting = C.list().filter((s) => s.status === 'new').length;
-    el.innerHTML = waiting ? `<span class="engine-dot"></span><span>${plural(waiting, 'position')} queued</span>` : `<span class="engine-dot" data-state="ok"></span><span>Coach up to date</span>`;
+    const rp = C.reviewProgress();
+    el.innerHTML = waiting ? `<span class="engine-dot"></span><span>${plural(waiting, 'position')} queued</span>`
+      : rp.total && rp.done < rp.total ? `<span class="engine-dot"></span><span>${rp.done} of ${rp.total} games reviewed</span>`
+        : `<span class="engine-dot" data-state="ok"></span><span>Everything analysed</span>`;
   }
 }
 
@@ -77,12 +95,19 @@ function parseHash() {
 let lastSec = null;
 export async function route() {
   let { sec, arg } = parseHash();
-  if (!sec) {
-    sec = C.list().some((s) => s.status === 'ready' || s.status === 'new') ? 'discoveries' : C.user ? 'library' : 'discoveries';
-    history.replaceState(null, '', `#${sec}`);
-  }
-  $$('#subnav a').forEach((a) => (a.dataset.sec === sec ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
-  moveInk();
+  if (sec === 'guide') { sec = 'plan'; history.replaceState(null, '', '#plan'); }
+  if (!sec) { sec = 'today'; history.replaceState(null, '', '#today'); }
+  const group = GROUP_OF[sec];
+  setActive(group);
+  const sub = $('#subnav');
+  const hasSub = group === 'study' || group === 'analyse';
+  sub.hidden = !hasSub;
+  $$('#subnav a').forEach((a) => {
+    a.hidden = a.dataset.group !== group;
+    if (a.dataset.sec === sec) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
+  document.title = `${{ today: 'Today', discoveries: 'Discoveries', library: 'Library', puzzles: 'Puzzles', progress: 'Progress', games: 'Games', review: 'Review', insights: 'Insights', plan: 'Plan' }[sec]} · Outpost`;
+  requestAnimationFrame(moveInk);
   if (sec === 'discoveries' && arg[0]) {
     if (lastSec !== 'discoveries') draw('discoveries', []);
     openStory(C, arg[0], { onClose: () => { history.replaceState(null, '', '#discoveries'); draw('discoveries', []); } });
@@ -97,13 +122,16 @@ function draw(sec, arg) {
   view.classList.remove('view-enter', 'quiet');
   void view.offsetWidth;
   view.classList.add('view-enter');
-  if (sec === 'discoveries') renderDiscoveries();
+  if (sec === 'today') renderToday(view, C, S);
+  else if (sec === 'discoveries') renderDiscoveries();
   else if (sec === 'library') renderLibrary(view, C, arg);
+  else if (sec === 'puzzles') renderPuzzles(view, C, arg);
+  else if (sec === 'progress') renderProgress(view, C);
   else if (sec === 'games') renderGames();
   else if (sec === 'review') renderReview(view, C, S, arg);
   else if (sec === 'insights') renderInsights(view, C, S);
   else renderGuide();
-  scrollTo({ top: 0 });
+  window.scrollTo({ top: 0 });
 }
 addEventListener('hashchange', route);
 const current = () => parseHash().sec;
@@ -125,7 +153,6 @@ async function sync(user) {
       const t = $('#syncMsg');
       if (t) t.textContent = S.syncMsg;
     });
-    S.an = (await store.get(`an-${C.user.toLowerCase()}`).catch(() => null)) || {};
     S.syncMsg = r.games ? `${r.games} games loaded.${r.discoveries ? ` ${plural(r.discoveries, 'new position')} caught for Discoveries.` : ''}` : 'No standard chess games found for this name.';
     if (r.discoveries) toast(`${plural(r.discoveries, 'new position')} caught from your games`);
   } catch (e) {
@@ -276,8 +303,10 @@ function opRows(L) {
 }
 
 function renderGames() {
-  const head = `<span class="eyebrow">Games</span><h1 class="h1">Your chess.com games</h1>
-    <div class="row" style="margin:12px 0 4px;max-width:560px"><input class="input lg grow" id="gUser" value="${esc(C.user)}" placeholder="chess.com username" autocomplete="off" spellcheck="false"><button class="btn cta lg" id="gSync" ${S.syncing ? 'disabled' : ''}>${C.games.length ? 'Update' : 'Import'}</button></div>
+  const am = C.autoSyncMinutes();
+  const head = `<span class="eyebrow">Analyse</span><h1 class="h1">Your chess.com games</h1>
+    <div class="row" style="margin:12px 0 4px"><input class="input lg grow" style="max-width:420px" id="gUser" value="${esc(C.user)}" placeholder="chess.com username" autocomplete="off" spellcheck="false"><button class="btn cta lg" id="gSync" ${S.syncing ? 'disabled' : ''}>${C.games.length ? 'Update now' : 'Import'}</button>
+      <label class="field-inline">Update automatically<select class="select" id="gAuto">${[[0, 'Off'], [15, 'Every 15 minutes'], [60, 'Every hour'], [360, 'Every 6 hours'], [1440, 'Once a day']].map(([v, t]) => `<option value="${v}" ${v === am ? 'selected' : ''}>${t}</option>`).join('')}</select></label></div>
     <p class="${S.syncErr ? 'err-text' : 'note'}" id="syncMsg">${esc(S.syncErr || S.syncMsg)}</p><div class="progress" style="max-width:560px" ${S.syncing ? '' : 'hidden'}><i id="syncBar"></i></div>`;
   if (!C.games.length) {
     view.innerHTML = `${head}<p class="lede">Enter your username to download your public chess.com games. They are saved in this app's data folder, so later updates only fetch new months.</p>`;
@@ -340,6 +369,8 @@ function renderGames() {
 }
 
 function bindGameSync() {
+  const au = $('#gAuto');
+  if (au) au.onchange = () => { C.setAutoSync(+au.value); renderAccount(); toast(+au.value ? 'Games will update automatically while Outpost is open' : 'Automatic updates are off'); };
   const go = () => sync($('#gUser').value);
   $('#gSync').onclick = go;
   $('#gUser').onkeydown = (e) => { if (e.key === 'Enter') go(); };
@@ -359,8 +390,31 @@ function renderGuide() {
 }
 
 // ───────────────────────── start ─────────────────────────
+// Screens that show live data re-render quietly when it changes (no entrance animation).
+const LIVE = {
+  today: () => renderToday(view, C, S, { quiet: true }),
+  games: () => renderGames(),
+  plan: () => renderGuide(),
+  progress: () => renderProgress(view, C, { quiet: true }),
+  puzzles: () => { if (!parseHash().arg[0] && !puzzleSessionActive()) renderPuzzles(view, C); },
+  insights: () => renderInsights(view, C, S, { quiet: true }),
+  review: () => { if (!parseHash().arg[0]) renderReview(view, C, S, [], { quiet: true }); },
+};
+let liveTimer = null;
+function refreshLive(secs) {
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(() => {
+    const sec = current();
+    if (!$('#story').hidden || !secs.includes(sec) || !LIVE[sec]) return;
+    const y = window.scrollY;
+    view.classList.add('quiet');
+    LIVE[sec]();
+    window.scrollTo({ top: y });
+  }, 250);
+}
+
 (async () => {
-  view.innerHTML = '<p class="note">Loading your library…</p>';
+  view.innerHTML = '<p class="note">Loading…</p>';
   await C.ready;
   renderAccount();
   renderBg();
@@ -369,18 +423,26 @@ function renderGuide() {
     renderBg();
     const sec = current();
     if (sec === 'discoveries' && $('#story').hidden) renderDiscoveries(true);
+    refreshLive(['today', 'plan']);
+  });
+  C.addEventListener('reviewed', () => { renderBg(); refreshLive(['review', 'insights', 'today', 'plan', 'progress', 'puzzles']); });
+  C.addEventListener('practice', () => { paintDue(); refreshLive(['today']); });
+  C.addEventListener('synced', (e) => {
+    renderAccount();
+    const { fresh, discoveries } = e.detail || {};
+    if (fresh) toast(`${plural(fresh, 'new game')} from chess.com${discoveries ? ` · ${plural(discoveries, 'new position')} to study` : ''}`);
+    refreshLive(['today', 'games', 'review', 'insights', 'plan', 'puzzles', 'progress']);
   });
   route();
   if (C.user) {
     try {
       await C.loadGames();
-      S.an = (await store.get(`an-${C.user.toLowerCase()}`).catch(() => null)) || {};
       await C.ingest(C.games);
-      if (current() === 'games') renderGames();
-      if (current() === 'guide') renderGuide();
+      refreshLive(['today', 'games', 'review', 'insights', 'plan', 'puzzles', 'progress']);
     } catch (e) { console.warn(e); }
   }
   C.kick();
+  C.startAutoSync();
   window.__coach = { C, S, interactiveQueue };
 })();
 export { when };

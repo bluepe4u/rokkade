@@ -287,3 +287,59 @@ export function bookPlies(x, libPly = 0) {
   while ((m = re.exec(slug))) n = +m[1] * 2 - (m[2].length > 1 || m[4] ? 0 : 1);
   return Math.max(n || 6, libPly);
 }
+
+// ───────────────────────── reviews feed Insights and the game list ─────────────────────────
+export const reviewDocName = (id) => `rv-${String(id).replace(/[^A-Za-z0-9_-]/g, '-').slice(-70)}`;
+
+/** Insights record (same shape as insightGame) computed from a finished review, no extra engine work. */
+export function insightFromReview(x, R) {
+  const s = R.san;
+  const { fens } = fensOf(s);
+  const clk = [...((x.g?.pgn || '').matchAll(/%clk (\d+):(\d+):([\d.]+)/g))].map((m) => +m[1] * 3600 + +m[2] * 60 + +m[3]);
+  const me = (v) => (x.col === 'w' ? v : 100 - v);
+  const out = { u: x.id, col: x.col, moves: 0, loss: 0, bl: [], mi: 0, inacc: 0, missed: [], sac: [], sc: x.sc, url: x.url, d: R.d, from: 'review' };
+  let skip = -1;
+  for (let i = 0; i < s.length; i++) {
+    if ((i % 2 === 0) !== (x.col === 'w')) continue;
+    out.moves++;
+    const drop = Math.max(0, me(R.ev[i].w) - me(R.ev[i + 1].w));
+    out.loss += drop;
+    const mvn = Math.floor(i / 2) + 1;
+    const bestSan = R.ev[i].bs || null;
+    const phase = mvn <= 10 ? 'Opening' : pieceCount(fens[i]) <= 6 ? 'Endgame' : 'Middlegame';
+    if (drop >= 15) out.bl.push({ ply: i, mv: mvn, san: s[i], best: bestSan, drop: Math.round(drop), fen: fens[i], phase, clk: clk[i] ?? null });
+    else if (drop >= 10) out.mi++;
+    else if (drop >= 5) out.inacc++;
+    if (i > 0) {
+      const oppDrop = (100 - me(R.ev[i - 1].w)) - (100 - me(R.ev[i].w));
+      if (oppDrop >= 15 && drop >= 10 && s[i] !== bestSan) out.missed.push({ ply: i, mv: mvn, san: s[i], best: bestSan, drop: Math.round(drop), opp: s[i - 1], fen: fens[i] });
+    }
+    if (i > skip && i + 3 < fens.length) {
+      const net = material(fens[i], x.col) - material(fens[i + 3], x.col);
+      if (net >= 2) { skip = i + 2; out.sac.push({ ply: i, mv: mvn, san: s[i], net, drop: Math.round(drop), sound: drop < 10, fen: fens[i], best: bestSan, res: x.sc }); }
+    }
+  }
+  return out;
+}
+
+/** Compact facts about a review for lists: accuracy, an eval sparkline and move-class counts per side. */
+export function reviewSummary(R) {
+  const n = R.ev.length;
+  const step = Math.max(1, Math.ceil(n / 40));
+  const spark = R.ev.filter((_, i) => i % step === 0 || i === n - 1).map((e) => Math.round(e.w));
+  const c = { w: {}, b: {} };
+  R.cl.forEach((k, i) => { const side = i % 2 ? 'b' : 'w'; c[side][k] = (c[side][k] || 0) + 1; });
+  return { w: R.acc.w, b: R.acc.b, s: spark, c, d: R.d };
+}
+
+/** Accuracy per phase for one side: {Opening, Middlegame, Endgame} (null where the side made no move). */
+export function phaseAccuracy(R, col) {
+  const { fens } = fensOf(R.san);
+  const buckets = { Opening: [], Middlegame: [], Endgame: [] };
+  R.loss.forEach((l, i) => {
+    if ((i % 2 === 0) !== (col === 'w')) return;
+    const mvn = Math.floor(i / 2) + 1;
+    buckets[mvn <= 10 ? 'Opening' : pieceCount(fens[i]) <= 6 ? 'Endgame' : 'Middlegame'].push(l);
+  });
+  return Object.fromEntries(Object.entries(buckets).map(([k, v]) => [k, v.length ? +accuracyOf(v).toFixed(1) : null]));
+}

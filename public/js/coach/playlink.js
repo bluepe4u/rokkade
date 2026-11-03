@@ -1,6 +1,6 @@
 // Play page ↔ Coach: shows where the game stands in your library, and catches the moment an
 // opponent (the solver) leaves it, saving the position to Discoveries.
-import { coach, bindBadge } from './service.js';
+import { coach } from './service.js';
 import { moveLabel } from './library.js';
 import { MAX_PLY, discoveryId } from './discoveries.js';
 import { esc } from './ui.js';
@@ -8,7 +8,6 @@ import { esc } from './ui.js';
 const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 export function attachPlay({ chip, toast }) {
-  document.querySelectorAll('[data-badge]').forEach(bindBadge);
   const C = coach();
   C.pause(true); // the solver needs the CPU while you play; analysis resumes when the game ends
   let ready = false;
@@ -66,7 +65,7 @@ export function attachPlay({ chip, toast }) {
 
   return {
     update,
-    gameOver() { C.pause(false); },
+    gameOver(serial, humans = true) { C.pause(false); if (humans && serial) C.log('game', `term-${serial}`); },
     playing() { C.pause(true); },
   };
 }
