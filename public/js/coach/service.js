@@ -1,7 +1,7 @@
 // Shared Coach state for every page: the library (with your added lines), discoveries, and the
 // background analyser. One tab analyses at a time (a localStorage lease); all tabs hear about changes.
 import { Engine } from '../engine.js';
-import { Library } from './library.js';
+import { Library, moveLabel } from './library.js';
 import { EngineQueue } from './analysis.js';
 import { store, ls } from './store.js';
 import { prepGames } from './games.js';
@@ -48,6 +48,10 @@ class CoachService extends EventTarget {
 
   async #init() {
     this.lib = new Library();
+    if (!this.user) {
+      const prof = await store.get('profile').catch(() => null);
+      if (prof?.user) { this.user = prof.user; ls.set('coach-user', this.user); }
+    }
     this.custom = (await store.get('custom').catch(() => null)) || [];
     this.lib.applyCustom(this.custom);
     this.doc = mergeDocs({ items: {} }, (await store.get(DOC).catch(() => null)) || {});
@@ -69,6 +73,7 @@ class CoachService extends EventTarget {
     const { api } = await import('./store.js');
     this.user = user;
     ls.set('coach-user', user);
+    store.set('profile', { user }).catch(() => null);
     const ar = await api(`/api/archives?user=${encodeURIComponent(user)}`);
     let i = 0;
     for (const ym of ar.todo) {
@@ -130,7 +135,7 @@ class CoachService extends EventTarget {
     const plan = chosenSan === best
       ? `They played ${s.label} in ${s.n === 1 ? 'one of your games' : `${s.n} of your games`}. ${chosenSan} is the engine's choice${mine ? ', and it is also what you played' : ''}.`
       : `They played ${s.label} in ${s.n === 1 ? 'one of your games' : `${s.n} of your games`}. You kept your own ${chosenSan}: it stays within a few points of the engine's ${best}.`;
-    const title = `${s.label} ${chosenSan}`;
+    const title = `${s.label} ${moveLabel(it.ply + 1)}${chosenSan}`;
     if (!this.lib.hasLine(it.side, san)) {
       const entry = { side: it.side, san, title, plan, from: 'discovery', disc: id, date: Date.now() };
       this.custom.push(entry);

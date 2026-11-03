@@ -22,6 +22,7 @@ function gameRef(x, ply) {
   return {
     id: x.id, t: x.t || 0, src: x.src || 'chess.com', opp: x.opp || '', opR: x.opR ?? null, myR: x.myR ?? null,
     tc: x.tc || '', sc: x.sc ?? null, ex: x.ex ?? null, url: x.url || null, reply: x.sans[ply + 1] || null,
+    fam: x.fam && x.fam !== 'Unknown' ? x.fam : null, name: x.name && x.name !== 'Unknown' ? x.name : null,
   };
 }
 
@@ -101,8 +102,9 @@ export function summarize(it, target) {
   const usual = groups[0] || null;
   const shortfall = Math.max(0, a.ex - a.sc);
   const last = it.games.reduce((m, g) => Math.max(m, g.t || 0), 0);
+  const names = [...groupBy(it.games.filter((g) => g.fam), (g) => g.fam)].sort((p, q) => q[1].length - p[1].length);
   return {
-    ...it, status, a, groups, usual, last, n: it.games.length,
+    ...it, status, a, groups, usual, last, n: it.games.length, opening: names[0]?.[0] || null,
     label: `${moveLabel(it.ply)}${it.move}`,
     impact: it.games.length * (1 + 2 * shortfall) + (usual?.eval?.loss >= 10 ? 2 : 0),
   };
