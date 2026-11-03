@@ -25,7 +25,11 @@ const USER_RE = /^[A-Za-z0-9_-]{1,40}$/;
 const YM_RE = /^\d{4}\/\d{2}$/;
 const STORE_RE = /^[A-Za-z0-9_-]{1,80}$/;
 const MAX_BODY = 32 * 1024 * 1024;
-const KEEP = ['uuid', 'url', 'pgn', 'time_class', 'rules', 'rated', 'end_time', 'eco', 'accuracies'];
+const KEEP = ['uuid', 'url', 'pgn', 'time_class', 'time_control', 'rules', 'rated', 'end_time', 'eco', 'accuracies'];
+const crypto = require('crypto');
+const EXPLORER = (process.env.LICHESS_EXPLORER_BASE || 'https://explorer.lichess.ovh').replace(/\/$/, '');
+const TOKEN_FILE = () => path.join(DATA, 'lichess-token.txt');
+const EXPLORER_TTL = 30 * 86400 * 1000;
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -46,13 +50,13 @@ class HttpError extends Error {
   constructor(code) { super(`HTTP ${code}`); this.code = code; }
 }
 
-function getOnce(url, redirects = 3) {
+function getOnce(url, redirects = 3, extra = {}) {
   return new Promise((resolve, reject) => {
     const lib = url.startsWith('https:') ? https : http;
-    const req = lib.get(url, { headers: { 'User-Agent': UA, Accept: 'application/json' }, timeout: 45000 }, (res) => {
+    const req = lib.get(url, { headers: { 'User-Agent': UA, Accept: 'application/json', ...extra }, timeout: 45000 }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects > 0) {
         res.resume();
-        resolve(getOnce(new URL(res.headers.location, url).href, redirects - 1));
+        resolve(getOnce(new URL(res.headers.location, url).href, redirects - 1, extra));
         return;
       }
       if (res.statusCode !== 200) { res.resume(); reject(new HttpError(res.statusCode)); return; }
@@ -115,8 +119,42 @@ async function apiGet(req, res, url) {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     return fs.createReadStream(f).pipe(res);
   }
+  if (url.pathname === '/api/lichess-status') {
+    return sendJSON(res, { token: !!process.env.LICHESS_EXPLORER_BASE || (fs.existsSync(TOKEN_FILE()) && fs.readFileSync(TOKEN_FILE(), 'utf8').trim().length > 0) });
+  }
+  if (url.pathname === '/api/lichess') {
+    // Lichess opening explorer (needs a free personal token); answers are cached for 30 days.
+    const fen = q.fen || '';
+    const ratings = (q.ratings || '').replace(/[^0-9,]/g, '');
+    const speeds = (q.speeds || '').replace(/[^a-z,]/g, '');
+    if (!/^[1-8pnbrqkPNBRQK/]+ [wb] [KQkq-]+ [a-h1-8-]+( \d+ \d+)?$/.test(fen)) return sendJSON(res, { error: 'bad fen' }, 400);
+    const qs = `variant=standard&fen=${encodeURIComponent(fen)}&ratings=${ratings}&speeds=${speeds}&moves=12&topGames=0&recentGames=0`;
+    const dir = path.join(DATA, 'cache', 'explorer');
+    fs.mkdirSync(dir, { recursive: true });
+    const f = path.join(dir, `${crypto.createHash('sha1').update(qs).digest('hex')}.json`);
+    if (fs.existsSync(f) && Date.now() - fs.statSync(f).mtimeMs < EXPLORER_TTL) {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      return fs.createReadStream(f).pipe(res);
+    }
+    const token = fs.existsSync(TOKEN_FILE()) ? fs.readFileSync(TOKEN_FILE(), 'utf8').trim() : '';
+    if (!token && !process.env.LICHESS_EXPLORER_BASE) return sendJSON(res, { error: 'no-token' }, 401);
+    try {
+      const j = await getOnce(`${EXPLORER}/lichess?${qs}`, 3, token ? { Authorization: `Bearer ${token}` } : {});
+      fs.writeFileSync(f, JSON.stringify(j));
+      return sendJSON(res, j);
+    } catch (e) {
+      if (e instanceof HttpError && (e.code === 401 || e.code === 403)) return sendJSON(res, { error: 'bad-token' }, 401);
+      if (e instanceof HttpError && e.code === 429) return sendJSON(res, { error: 'Lichess is rate-limiting; try again in a minute.' }, 429);
+      throw e;
+    }
+  }
   const user = q.user || '';
   if (!USER_RE.test(user)) return sendJSON(res, { error: 'That does not look like a chess.com username.' }, 400);
+  if (url.pathname === '/api/player') {
+    const u0 = encodeURIComponent(user.toLowerCase());
+    const [profile, stats] = await Promise.all([fetchJSON(`${API_BASE}/pub/player/${u0}`), fetchJSON(`${API_BASE}/pub/player/${u0}/stats`).catch(() => ({}))]);
+    return sendJSON(res, { profile: { username: profile.username, name: profile.name || '', avatar: profile.avatar || '', country: (profile.country || '').split('/').pop(), joined: profile.joined || 0, last_online: profile.last_online || 0, title: profile.title || '' }, stats });
+  }
   const u = encodeURIComponent(user.toLowerCase());
   if (url.pathname === '/api/archives') {
     const arch = (await fetchJSON(`${API_BASE}/pub/player/${u}/games/archives`)).archives || [];
@@ -148,8 +186,21 @@ function apiPost(req, res, url) {
   const origin = req.headers.origin;
   let originHost = null;
   try { originHost = origin ? new URL(origin).hostname : null; } catch { originHost = 'bad'; }
-  if (url.pathname !== '/api/store' || ![null, '127.0.0.1', 'localhost'].includes(originHost)) {
+  if (!['/api/store', '/api/lichess-token'].includes(url.pathname) || ![null, '127.0.0.1', 'localhost'].includes(originHost)) {
     res.writeHead(403).end('Forbidden');
+    return;
+  }
+  if (url.pathname === '/api/lichess-token') {
+    let b = '';
+    req.on('data', (c) => { b += c; if (b.length > 4096) req.destroy(); });
+    req.on('end', () => {
+      let token = '';
+      try { token = String(JSON.parse(b).token || '').trim(); } catch { sendJSON(res, { error: 'not JSON' }, 400); return; }
+      if (token && !/^[A-Za-z0-9_-]{8,200}$/.test(token)) { sendJSON(res, { error: 'That does not look like a Lichess token.' }, 400); return; }
+      fs.mkdirSync(DATA, { recursive: true });
+      if (token) fs.writeFileSync(TOKEN_FILE(), token, { mode: 0o600 }); else if (fs.existsSync(TOKEN_FILE())) fs.unlinkSync(TOKEN_FILE());
+      sendJSON(res, { ok: true });
+    });
     return;
   }
   const name = url.searchParams.get('name') || '';

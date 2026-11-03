@@ -69,7 +69,7 @@ export async function renderReview(view, C, S, args = [], { quiet = false } = {}
   const rp = C.reviewProgress();
   const q = RV.q.trim().toLowerCase();
   const L = filterGames(C.games, S.f).filter((x) => !q || `${x.opp} ${x.fam} ${x.name}`.toLowerCase().includes(q)).slice().reverse();
-  const mine = C.games.filter((x) => idx[x.id]).slice(-20).map((x) => idx[x.id][x.col]);
+  const mine = C.games.filter((x) => idx[x.id]).slice(-20).map((x) => C.calAcc(idx[x.id][x.col]));
   const avg = mine.length ? mine.reduce((a, b) => a + b, 0) / mine.length : null;
   const p = C.progress?.kind === 'review' ? C.progress : null;
   const groups = [];
@@ -95,7 +95,7 @@ export async function renderReview(view, C, S, args = [], { quiet = false } = {}
         <span class="gr-main"><b>${esc(x.opp)} <small class="rt">${x.opR}</small></b><small><i class="side-dot ${x.col}"></i>${esc(x.fam)} · ${esc(x.tc)} · ${when(x.t)}</small></span>
         <span class="gr-spark">${r ? sparkSVG(r.s, x.col) : ''}</span>
         <span class="gr-err">${r ? `${mc.blunder ? `<span class="cnt" style="--c:var(--cl-blunder)">${mc.blunder}??</span>` : ''}${mc.mistake ? `<span class="cnt" style="--c:var(--cl-mistake)">${mc.mistake}?</span>` : ''}${(mc.brilliant || 0) + (mc.great || 0) ? `<span class="cnt" style="--c:var(--cl-great)">${(mc.brilliant || 0) + (mc.great || 0)}!</span>` : ''}` : ''}</span>
-        <span class="gr-acc">${r ? `<span class="acc-pill" style="--c:${accColor(r[x.col])}">${r[x.col]}</span>` : now ? `<span class="queued"><span class="ring spin sm"></span>${Math.round((100 * p.i) / p.n)}%</span>` : '<span class="queued">In queue</span>'}</span>
+        <span class="gr-acc">${r ? `<span class="acc-pill" style="--c:${accColor(C.calAcc(r[x.col]))}">${C.calAcc(r[x.col])}</span>` : now ? `<span class="queued"><span class="ring spin sm"></span>${Math.round((100 * p.i) / p.n)}%</span>` : '<span class="queued">In queue</span>'}</span>
       </button>`;
     }).join('')}</div>`).join('') || '<p class="note">No games match.</p>'}
     ${L.length > RV.show ? `<button class="btn" id="more" style="margin-top:12px;width:100%">Show more (${L.length - RV.show} left)</button>` : ''}`;
@@ -140,7 +140,7 @@ async function openGame(x, startP) {
   const first = R.cl.findIndex((c, i) => ['blunder', 'miss', 'mistake'].includes(c) && (i % 2 === 0) === (x.col === 'w'));
   RV.p = startP != null && startP >= 0 ? startP : 0;
   drawGame();
-  if (startP == null && first >= 0) setTimeout(() => { if (tk === RV.tk) go(first + 1); }, 700);
+  void first;
 }
 
 function graphSVG(R, col) {
@@ -160,14 +160,50 @@ function graphSVG(R, col) {
     ${marks}<line id="rvcur" class="g-cur" y1="0" y2="${H}"/><circle id="rvdot" class="g-dot" r="5"/></svg><div class="g-tip" id="rvtip" hidden></div>`;
 }
 
+const HELP = {
+  brilliant: 'A strong sacrifice: you gave up material and the position stayed good.',
+  great: 'The only good move in the position. Well found.',
+  best: "The engine's top choice.",
+  excellent: 'Almost as good as the best move.',
+  good: 'A reasonable move; something slightly better existed.',
+  book: 'A known opening move.',
+  forced: 'The only legal move.',
+  inaccuracy: 'Not a disaster, but a better move was there.',
+  mistake: 'This made your position noticeably worse.',
+  miss: 'Your opponent had just gone wrong, and this let them off the hook.',
+  blunder: 'A serious error that changes the evaluation a lot.',
+};
+const pl = (n, w, ws = `${w}s`) => `${n} ${n === 1 ? w : ws}`;
+
 function keyMoments(R, col) {
   const out = [];
   R.cl.forEach((c, i) => {
-    const mineMove = (i % 2 === 0) === (col === 'w');
-    if (mineMove && ['blunder', 'mistake', 'miss', 'brilliant', 'great'].includes(c)) out.push({ i, c, mine: true });
-    else if (!mineMove && ['blunder'].includes(c)) out.push({ i, c, mine: false });
+    const mine = (i % 2 === 0) === (col === 'w');
+    if (mine && ['blunder', 'mistake', 'miss', 'brilliant', 'great'].includes(c)) out.push({ i, c, mine: true });
+    else if (!mine && c === 'blunder') out.push({ i, c, mine: false });
   });
-  return out.slice(0, 12);
+  // keep the 8 biggest swings, in game order
+  return out.map((m) => ({ ...m, w: m.mine ? (ERROR_CLASSES.includes(m.c) ? R.loss[m.i] : 20) : R.loss[m.i] }))
+    .sort((a, b) => b.w - a.w).slice(0, 8).sort((a, b) => a.i - b.i);
+}
+
+function momentTitle(m) {
+  if (!m.mine) return 'Their mistake';
+  return { blunder: 'Your blunder', mistake: 'Your mistake', miss: 'A missed chance', brilliant: 'A brilliant move', great: 'A great find' }[m.c] || CLASSES[m.c].label;
+}
+
+function quality(cnt) {
+  const good = (cnt.brilliant || 0) + (cnt.great || 0) + (cnt.best || 0) + (cnt.excellent || 0) + (cnt.good || 0) + (cnt.book || 0) + (cnt.forced || 0);
+  const parts = [
+    ['good', good, 'good move', 'var(--cl-best)'],
+    ['inaccuracy', cnt.inaccuracy || 0, 'inaccuracy', 'var(--cl-inaccuracy)', 'inaccuracies'],
+    ['mistake', (cnt.mistake || 0) + (cnt.miss || 0), 'mistake', 'var(--cl-mistake)'],
+    ['blunder', cnt.blunder || 0, 'blunder', 'var(--cl-blunder)'],
+  ];
+  const total = parts.reduce((t, q) => t + q[1], 0) || 1;
+  const txt = parts.filter((q) => q[1] || q[0] === 'good').map((q) => pl(q[1], q[2], q[4])).join(' · ');
+  return `<div class="qbar" role="img" title="${txt}" aria-label="${txt}">${parts.map((q) => (q[1] ? `<i style="--w:${(100 * q[1]) / total}%;--c:${q[3]}"></i>` : '')).join('')}</div>
+    <small class="qtxt">${parts.filter((q) => q[0] !== 'good' && q[1]).map((q) => `<span style="--c:${q[3]}"><i></i>${pl(q[1], q[2], q[4])}</span>`).join('') || '<span style="--c:var(--cl-best)"><i></i>no errors</span>'}</small>`;
 }
 
 function drawGame() {
@@ -179,69 +215,109 @@ function drawGame() {
   const res = x.sc === 1 ? 'You won' : x.sc === 0.5 ? 'Draw' : 'You lost';
   const how = RESULT_TEXT[(x.sc === 1 ? opP : meP)?.result] || '';
   const cc = g.accuracies;
+  const ccOf = (c) => cc?.[c === 'w' ? 'white' : 'black'];
+  const acc = (c) => RV.C.calAcc ? RV.C.calAcc(R.acc[c]) : R.acc[c];
   const ph = { me: phaseAccuracy(R, x.col), op: phaseAccuracy(R, opp) };
   const cnt = { w: {}, b: {} };
   R.cl.forEach((c, i) => { const sd = i % 2 ? 'b' : 'w'; cnt[sd][c] = (cnt[sd][c] || 0) + 1; });
   const km = keyMoments(R, x.col);
-  const strip = (side) => {
-    const order = ['brilliant', 'great', 'best', 'excellent', 'good', 'book', 'forced', 'inaccuracy', 'mistake', 'miss', 'blunder'];
-    const tot = R.cl.filter((_, i) => (i % 2 ? 'b' : 'w') === side).length || 1;
-    return `<div class="cl-strip">${order.map((k) => (cnt[side][k] ? `<i style="--w:${(100 * cnt[side][k]) / tot}%;background:${CLASSES[k].color}" title="${cnt[side][k]} ${CLASSES[k].label}"></i>` : '')).join('')}</div>`;
+  RV.km = km;
+  RV.tab = RV.tab || 'coach';
+  const player = (c) => {
+    const me = c === x.col;
+    const P = me ? meP : opP;
+    const a = acc(c);
+    return `<div class="pbar ${me ? 'me' : ''}" data-side="${c}">
+      <span class="pav ${c}">${esc((P?.username || '?')[0].toUpperCase())}</span>
+      <span class="pname"><b>${esc(P?.username || (me ? 'You' : x.opp))} <small>${(me ? x.myR : x.opR) || ''}${me ? ' · you' : ''}</small></b>${quality(cnt[c])}</span>
+      <span class="pacc" style="--c:${accColor(a)}" title="Accuracy: how close the moves were to the engine's, from 0 to 100"><b data-count="${a}" data-fmt="dec">${a.toFixed(1)}</b><small>accuracy${ccOf(c) != null ? ` · chess.com ${ccOf(c).toFixed(1)}` : ''}</small></span>
+    </div>`;
   };
-  view.innerHTML = `<a class="link back" href="#review">← All games</a>
-    <section class="rv-head rise">
-      <div class="rv-player you">${accRing(R.acc[x.col], 'accuracy', true)}<div><span class="eyebrow">You · ${x.col === 'w' ? 'White' : 'Black'}</span><b>${esc(meP?.username || 'You')} <small>${x.myR || ''}</small></b>${strip(x.col)}${cc?.[x.col === 'w' ? 'white' : 'black'] != null ? `<small class="note">chess.com ${cc[x.col === 'w' ? 'white' : 'black'].toFixed(1)}</small>` : ''}</div></div>
-      <div class="rv-result ${x.sc === 1 ? 'win' : x.sc === 0.5 ? 'draw' : 'loss'}"><b>${res}</b><span>${esc(how)}</span><small>${esc(x.name)}<br>${esc(x.tc)} · ${when(x.t)}${x.url ? ` · <a class="link" href="${esc(x.url)}" target="_blank" rel="noopener">chess.com ↗</a>` : ''}</small></div>
-      <div class="rv-player">${accRing(R.acc[opp], 'accuracy', false)}<div><span class="eyebrow">Opponent · ${opp === 'w' ? 'White' : 'Black'}</span><b>${esc(opP?.username || x.opp)} <small>${x.opR || ''}</small></b>${strip(opp)}</div></div>
-    </section>
-    <div class="review">
-      <div class="rv-left">
+  view.innerHTML = `<div class="rv-top rise"><a class="link back" href="#review">← All games</a>
+      <span class="rv-res ${x.sc === 1 ? 'win' : x.sc === 0.5 ? 'draw' : 'loss'}">${res}${how ? ` <small>${esc(how)}</small>` : ''}</span>
+      <span class="rv-meta">${esc(x.name)} · ${esc(x.tc)} · ${when(x.t)}${x.url ? ` · <a class="link" href="${esc(x.url)}" target="_blank" rel="noopener">chess.com ↗</a>` : ''}</span></div>
+    <div class="rv2">
+      <div class="rv2-board">
+        <div id="pbTop"></div>
         <div class="rv-board"><div class="evalbar" id="evb"><div class="evalbar-fill" id="evf"></div><span class="evalbar-label" id="evt"></span></div><div id="rvBoard"></div></div>
-        <div class="board-ctl"><button class="btn icon" id="r0" title="Start (Home)">⏮</button><button class="btn icon" id="r1" title="Back (←)">◀</button><button class="btn icon play" id="rPlay" title="Play through (Space)">▶</button><button class="btn icon" id="r2" title="Forward (→)">▶</button><button class="btn icon" id="r3" title="End (End)">⏭</button><button class="btn icon" id="rFlip" title="Flip">⇅</button></div>
+        <div id="pbBot"></div>
+        <div class="board-ctl"><button class="btn icon" id="r0" title="Start (Home)">⏮</button><button class="btn icon" id="r1" title="Back (←)">◀</button><button class="btn icon play" id="rPlay" title="Play through (Space)">▶</button><button class="btn icon" id="r2" title="Forward (→)">▶</button><button class="btn icon" id="r3" title="End (End)">⏭</button><button class="btn icon" id="rFlip" title="Flip board">⇅</button></div>
+        <div class="evgraph" id="rvg" title="Who was better through the game: white area = White, dark = Black. Click to jump.">${graphSVG(R, x.col)}</div>
       </div>
-      <div class="rv-side">
-        <div id="rvc"></div>
-        <div class="evgraph" id="rvg">${graphSVG(R, x.col)}</div>
-        ${km.length ? `<div class="moments"><span class="eyebrow">Key moments</span><div class="moment-row">${km.map((m) => `<button class="moment ${m.mine ? 'mine' : 'theirs'}" data-p="${m.i + 1}">${chip(m.c)}<span>${moveLabel(m.i)}${esc(R.san[m.i])}</span><small>${m.mine ? (ERROR_CLASSES.includes(m.c) ? `−${Math.round(R.loss[m.i])}` : 'you') : 'their error'}</small></button>`).join('')}</div></div>` : ''}
-        <div class="mvt" id="rvm"></div>
+      <div class="rv2-side">
+        <div class="tabs" id="rvTabs" role="tablist">${[['coach', 'Coach'], ['moves', 'Moves'], ['report', 'Report']].map(([k, t]) => `<button role="tab" data-tab="${k}" aria-selected="${RV.tab === k}">${t}</button>`).join('')}<span class="tab-ink"></span></div>
+        <div class="tabpane" data-pane="coach" ${RV.tab === 'coach' ? '' : 'hidden'}>
+          ${km.length ? `<div class="km"><div class="km-head"><div><span class="eyebrow">Key moments</span><b id="kmLabel">${pl(km.length, 'moment')} decided this game</b></div><div class="km-nav"><button class="btn icon" id="kmPrev" title="Previous key moment (P)">◀</button><button class="btn cta sm" id="kmNext" title="Next key moment (N)">Next moment <span class="arrow">→</span></button></div></div>
+            <div class="moment-row">${km.map((m, k) => `<button class="moment ${m.mine ? 'mine' : 'theirs'}" data-p="${m.i + 1}" data-k="${k}">${chip(m.c)}<span>${moveLabel(m.i)}${esc(R.san[m.i])}</span></button>`).join('')}</div></div>` : '<div class="km"><b>A clean game.</b> <span class="note">No big swings for you here.</span></div>'}
+          <div id="rvc"></div>
+        </div>
+        <div class="tabpane" data-pane="moves" ${RV.tab === 'moves' ? '' : 'hidden'}><div class="mvt" id="rvm"></div></div>
+        <div class="tabpane" data-pane="report" ${RV.tab === 'report' ? '' : 'hidden'}>
+          <div class="rep-acc">${[x.col, opp].map((c) => `<div><span class="eyebrow">${c === x.col ? 'You' : 'Opponent'}</span><b style="color:${accColor(acc(c))}">${acc(c).toFixed(1)}</b><small>accuracy${ccOf(c) != null ? ` · chess.com ${ccOf(c).toFixed(1)}` : ''}</small></div>`).join('')}</div>
+          <div class="panel-card"><span class="eyebrow">Accuracy by phase</span>${['Opening', 'Middlegame', 'Endgame'].map((k) => `<div class="ph-row"><span>${k}</span><div class="ph-bars"><i class="you" data-w="${ph.me[k] ?? 0}"></i><i class="op" data-w="${ph.op[k] ?? 0}"></i></div><span class="ph-v">${ph.me[k] ?? '–'}<small> / ${ph.op[k] ?? '–'}</small></span></div>`).join('')}<div class="legend" style="margin-top:8px"><span><i style="background:var(--you)"></i>You</span><span><i style="background:var(--muted-foreground)"></i>Opponent</span></div></div>
+          <div class="panel-card"><span class="eyebrow">Every move, by quality</span><div class="mirror">${['brilliant', 'great', 'best', 'excellent', 'good', 'book', 'inaccuracy', 'mistake', 'miss', 'blunder'].map((k) => {
+            const a = cnt[x.col][k] || 0;
+            const b = cnt[opp][k] || 0;
+            const mx = Math.max(1, ...Object.values(cnt.w), ...Object.values(cnt.b));
+            return `<div class="mr" title="${esc(HELP[k])}"><span class="mr-v">${a}</span><span class="mr-l"><i data-w="${(100 * a) / mx}" style="background:${CLASSES[k].color}"></i></span><span class="mr-k">${chip(k)}${CLASSES[k].label}</span><span class="mr-r"><i data-w="${(100 * b) / mx}" style="background:${CLASSES[k].color}"></i></span><span class="mr-v">${b}</span></div>`;
+          }).join('')}</div><div class="legend" style="margin-top:8px;justify-content:space-between"><span>You</span><span>Opponent</span></div></div>
+          <p class="note">Accuracy and labels use Outpost's own formula${RV.C.cal ? `, calibrated to chess.com on ${RV.C.cal.n} of your results` : ''}. Reviewed at depth ${R.d}.</p>
+        </div>
       </div>
-    </div>
-    <h2 class="h2">The game in numbers</h2>
-    <div class="numbers">
-      <div class="panel-card rise"><span class="eyebrow">Accuracy by phase</span>${['Opening', 'Middlegame', 'Endgame'].map((k) => `<div class="ph-row"><span>${k}</span><div class="ph-bars"><i class="you" data-w="${ph.me[k] ?? 0}"></i><i class="op" data-w="${ph.op[k] ?? 0}"></i></div><span class="ph-v">${ph.me[k] ?? '–'}<small> / ${ph.op[k] ?? '–'}</small></span></div>`).join('')}<div class="legend" style="margin-top:8px"><span><i style="background:var(--you)"></i>You</span><span><i style="background:var(--muted-foreground)"></i>Opponent</span></div></div>
-      <div class="panel-card rise"><span class="eyebrow">Move classes</span><div class="mirror">${['brilliant', 'great', 'best', 'excellent', 'good', 'book', 'inaccuracy', 'mistake', 'miss', 'blunder'].map((k) => {
-        const a = cnt[x.col][k] || 0;
-        const b = cnt[opp][k] || 0;
-        const mx = Math.max(1, ...Object.values(cnt.w), ...Object.values(cnt.b));
-        return `<div class="mr"><span class="mr-v">${a}</span><span class="mr-l"><i data-w="${(100 * a) / mx}" style="background:${CLASSES[k].color}"></i></span><span class="mr-k">${chip(k)}${CLASSES[k].label}</span><span class="mr-r"><i data-w="${(100 * b) / mx}" style="background:${CLASSES[k].color}"></i></span><span class="mr-v">${b}</span></div>`;
-      }).join('')}</div><div class="legend" style="margin-top:8px;justify-content:space-between"><span>You</span><span>Opponent</span></div></div>
-    </div>
-    <p class="note">Labels and accuracy use Outpost's own formula (chess.com doesn't publish theirs), so numbers can differ from chess.com's.</p>`;
+    </div>`;
   stagger(view);
-  countUp(view);
-  requestAnimationFrame(() => {
-    $$('.acc-ring', view).forEach((r) => { const v = r.style.getPropertyValue('--p'); r.style.setProperty('--p', 0); requestAnimationFrame(() => r.style.setProperty('--p', v)); });
-    $$('[data-w]', view).forEach((i) => { i.style.width = `${i.dataset.w}%`; });
-  });
   RV.board = new AnimBoard($('#rvBoard'), { orientation: x.col });
+  const bars = () => {
+    const top = RV.board.orientation === 'w' ? 'b' : 'w';
+    $('#pbTop').innerHTML = player(top);
+    $('#pbBot').innerHTML = player(top === 'w' ? 'b' : 'w');
+    countUp($('.rv2-board'));
+    requestAnimationFrame(() => $$('.qbar i', view).forEach((i) => i.classList.add('in')));
+  };
+  bars();
+  requestAnimationFrame(() => $$('[data-w]', view).forEach((i) => { i.style.width = `${i.dataset.w}%`; }));
   $('#evb').classList.toggle('flipped', x.col === 'b');
+  const setTab = (t) => {
+    RV.tab = t;
+    $$('#rvTabs [data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === t)));
+    $$('.tabpane', view).forEach((pn) => { pn.hidden = pn.dataset.pane !== t; });
+    const cur = $(`#rvTabs [data-tab="${t}"]`);
+    const ink = $('#rvTabs .tab-ink');
+    ink.style.width = `${cur.offsetWidth}px`;
+    ink.style.transform = `translateX(${cur.offsetLeft}px)`;
+    if (t === 'report') $$('[data-pane="report"] [data-w]', view).forEach((i) => { i.style.width = '0'; requestAnimationFrame(() => { i.style.width = `${i.dataset.w}%`; }); });
+  };
+  $('#rvTabs').onclick = (e) => { const b = e.target.closest('[data-tab]'); if (b) setTab(b.dataset.tab); };
+  requestAnimationFrame(() => setTab(RV.tab));
   $('#r0').onclick = () => go(0);
   $('#r1').onclick = () => go(RV.p - 1);
   $('#r2').onclick = () => go(RV.p + 1);
   $('#r3').onclick = () => go(R.san.length);
   $('#rPlay').onclick = togglePlay;
-  $('#rFlip').onclick = () => { RV.board.setOrientation(RV.board.orientation === 'w' ? 'b' : 'w'); $('#evb').classList.toggle('flipped', RV.board.orientation === 'b'); };
+  $('#rFlip').onclick = () => { RV.board.setOrientation(RV.board.orientation === 'w' ? 'b' : 'w'); $('#evb').classList.toggle('flipped', RV.board.orientation === 'b'); bars(); };
   $$('.moment', view).forEach((b) => { b.onclick = () => go(+b.dataset.p); });
+  const stepMoment = (dir) => {
+    if (!km.length) return;
+    const k = dir > 0 ? km.findIndex((m) => m.i + 1 > RV.p) : km.map((m) => m.i + 1 < RV.p).lastIndexOf(true);
+    const target = k < 0 ? (dir > 0 ? km[0] : km.at(-1)) : km[k];
+    setTab('coach');
+    go(target.i + 1);
+  };
+  RV.stepMoment = stepMoment;
+  const kn = $('#kmNext');
+  if (kn) kn.onclick = () => stepMoment(1);
+  const kp = $('#kmPrev');
+  if (kp) kp.onclick = () => stepMoment(-1);
   const gs = $('#rvg');
   const at = (e) => { const r = gs.getBoundingClientRect(); return Math.max(0, Math.min(R.san.length, Math.round(((e.clientX - r.left) / r.width) * R.san.length))); };
   gs.onclick = (e) => go(at(e));
   gs.onpointermove = (e) => {
-    const p = at(e);
+    const pp = at(e);
     const tip = $('#rvtip');
     const r = gs.getBoundingClientRect();
     tip.hidden = false;
-    tip.style.left = `${Math.min(r.width - 120, Math.max(0, e.clientX - r.left - 60))}px`;
-    tip.innerHTML = p ? `${chip(R.cl[p - 1])}<b>${moveLabel(p - 1)}${esc(R.san[p - 1])}</b> <span>${esc(R.ev[p].t || '')}</span>` : 'Start';
+    tip.style.left = `${Math.min(r.width - 130, Math.max(0, e.clientX - r.left - 65))}px`;
+    tip.innerHTML = pp ? `${chip(R.cl[pp - 1])}<b>${moveLabel(pp - 1)}${esc(R.san[pp - 1])}</b> <span>${esc(R.ev[pp].t || '')}</span>` : 'Start';
   };
   gs.onpointerleave = () => { $('#rvtip').hidden = true; };
   const rows = [];
@@ -310,14 +386,19 @@ function drawBoard(animate = true) {
   let html;
   const mine = i >= 0 && (i % 2 === 0) === (x.col === 'w');
   if (retry) html = `<div class="comment try"><h3>Find a better move</h3><p>${esc(RV.msg || 'Your move: tap a piece, then its square.')}</p></div>`;
-  else if (i < 0) html = `<div class="comment"><h3>${esc(x.name)}</h3><p>Step through with ← →, press Space to play the game through, or jump to a key moment. Move any piece to explore what would have happened.</p></div>`;
+  else if (i < 0) html = `<div class="comment intro"><h3>How to review this game</h3><ol><li>Press <b>Next moment</b> to jump to the moves that decided the game.</li><li>At each one, read why it mattered, then try <b>Find a better move</b>.</li><li>Move any piece to explore other ideas; arrows show the engine's suggestions.</li></ol><p class="note">Keys: ← → step · N / P next or previous moment · Space plays the game.</p></div>`;
   else {
     const q = reviewComment(R, i, x.fam);
     const err = ERROR_CLASSES.includes(q.k);
-    html = `<div class="comment ${err ? 'err' : ''}" style="--c:${CLASSES[q.k].color}"><div class="cm-head"><span class="cm-chip">${CLASSES[q.k].sym}</span><div><b>${esc(moveLabel(i) + R.san[i])}</b><span>${CLASSES[q.k].label}${mine ? '' : ' · opponent'}</span></div><span class="cm-eval">${esc(R.ev[p].t || '')}</span></div>
+    const ki = (RV.km || []).findIndex((m) => m.i === i);
+    const km = ki >= 0 ? RV.km[ki] : null;
+    html = `<div class="comment ${err ? 'err' : ''}" style="--c:${CLASSES[q.k].color}">
+      ${km ? `<span class="eyebrow">Key moment ${ki + 1} of ${RV.km.length} · ${momentTitle(km)}</span>` : ''}
+      <div class="cm-head"><span class="cm-chip">${CLASSES[q.k].sym}</span><div><b>${esc(moveLabel(i) + R.san[i])} is ${q.k === 'book' ? 'a book move' : `${/^[aeiou]/i.test(CLASSES[q.k].label) ? 'an' : 'a'} ${CLASSES[q.k].label.toLowerCase()}`}</b><span>${mine ? 'Your move' : "Opponent's move"} · ${esc(HELP[q.k])}</span></div><span class="cm-eval" title="Evaluation from White's side: + means White is better">${esc(R.ev[p].t || '')}</span></div>
       <p>${esc(q.text)}</p>
-      ${q.line ? `<div class="cm-line"><span class="note">Best line</span> <span class="mono">${esc(q.line)}</span></div>` : ''}
-      <div class="row">${q.line ? '<button class="btn sm" id="rShow">Show the best line</button>' : ''}${mine && err ? '<button class="btn sm cta" id="rRetry">Find a better move</button>' : ''}</div></div>`;
+      ${q.line ? `<details class="cm-more"><summary>Show the engine's line</summary><div class="cm-line"><span class="mono">${esc(q.line)}</span></div></details>` : ''}
+      <div class="row">${q.line ? '<button class="btn sm" id="rShow">Play the better line</button>' : ''}${mine && err ? '<button class="btn sm cta" id="rRetry">Find a better move</button>' : ''}</div>
+      <p class="note cm-tip">Tip: move any piece on the board to explore what would have happened.</p></div>`;
   }
   $('#rvc').innerHTML = html;
   const sb = $('#rShow');
@@ -521,6 +602,8 @@ addEventListener('keydown', (e) => {
   else if (e.key === 'Home') go(0);
   else if (e.key === 'End') go(RV.R.san.length);
   else if (e.key === ' ') { e.preventDefault(); togglePlay(); }
+  else if (e.key === 'n' || e.key === 'N') RV.stepMoment?.(1);
+  else if (e.key === 'p' || e.key === 'P') RV.stepMoment?.(-1);
 });
 
 // ───────────────────────── Insights ─────────────────────────

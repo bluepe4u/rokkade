@@ -4,6 +4,7 @@ import { AnimBoard, sleep } from './animboard.js';
 import { $, $$, esc, miniBoard, stagger, toast } from './ui.js';
 import { moveLabel, sanLine, positionAfter } from './library.js';
 import { ls } from './store.js';
+import { renderExplorerPanel } from './lichessview.js';
 
 const T = {
   side: ls.get('rep-side', 'w'),
@@ -257,6 +258,12 @@ function draw(animate = true) {
     html = `<div class="line-info"><b>${n.p.length} lines from here</b><p style="margin:4px 0 0">${esc(cs.slice(0, 4).join(' · '))}${cs.length > 4 ? ' and more' : ''}</p></div>`;
   }
   info.innerHTML = html;
+  if (!drill) {
+    renderExplorerPanel($('#tStats'), C, {
+      fen: fullFen(n), libMoves: n.e.filter((e) => !e.w).map((e) => e.s),
+      onPick: (san) => { const e = n.e.find((q) => q.s === san); if (e) apply(e); else { const c = new Chess(fullFen(n)); const m = c.move(san); tryMove(m.from, m.to); } },
+    });
+  } else $('#tStats').innerHTML = '';
   $$('[data-rm]', info).forEach((b) => {
     b.onclick = async () => {
       const l = d.l[+b.dataset.rm];
@@ -322,6 +329,7 @@ function renderInto() {
         <div class="crumbs" id="tCrumbs"></div>
         <div id="tChoices"></div>
         <div id="tInfo"></div>
+        <div id="tStats"></div>
       </div>
     </div>
     <div id="tBrowse"></div>`;

@@ -21,6 +21,13 @@ before(async () => {
   mock = http.createServer((req, res) => {
     hits++;
     const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+    if (req.url.startsWith('/lichess?')) {
+      const auth = req.headers.authorization || '';
+      if (auth !== 'Bearer lip_testtoken123') return send(401, { error: 'no' });
+      return send(200, { white: 10, draws: 2, black: 8, moves: [{ uci: 'e7e5', san: 'e5', white: 5, draws: 1, black: 4 }] });
+    }
+    if (req.url === '/pub/player/tester') return send(200, { username: 'Tester', name: 'T', country: 'https://api.chess.com/pub/country/US', joined: 1 });
+    if (req.url === '/pub/player/tester/stats') return send(200, { chess_blitz: { last: { rating: 1500 } } });
     if (req.url === '/pub/player/tester/games/archives') {
       return send(200, { archives: ['2024/01', '2024/02', '2024/03'].map((m) => `https://api.chess.com/pub/player/tester/games/${m}`) });
     }
@@ -38,7 +45,7 @@ const hasPython = spawnSync('python3', ['--version']).status === 0;
 async function startServer(kind) {
   const data = fs.mkdtempSync(path.join(os.tmpdir(), 'sfet-data-'));
   const port = 20000 + Math.floor(Math.random() * 20000);
-  const env = { ...process.env, NO_OPEN: '1', TERMINAL_DATA_DIR: data, CHESSCOM_API_BASE: `http://127.0.0.1:${mockPort}` };
+  const env = { ...process.env, NO_OPEN: '1', TERMINAL_DATA_DIR: data, CHESSCOM_API_BASE: `http://127.0.0.1:${mockPort}`, LICHESS_EXPLORER_BASE: `http://127.0.0.1:${mockPort}` };
   const proc = kind === 'node'
     ? spawn(process.execPath, [path.join(ROOT, 'server.js'), String(port)], { env, stdio: 'ignore' })
     : spawn('python3', ['-I', path.join(ROOT, 'serve.py'), String(port)], { env, stdio: 'ignore' });
@@ -117,6 +124,23 @@ for (const kind of ['node', 'python']) {
       const post = await raw(s.port, { method: 'POST', pathName: '/api/store?name=custom', headers: { Origin: 'http://evil.example', 'Content-Type': 'application/json', 'Content-Length': 2 }, body: '{}' });
       assert.equal(post.status, 403);
       assert.deepEqual((await j('/api/store?name=custom')).body, { lines: [1, 2] });
+      // chess.com profile + ratings
+      r = await j('/api/player?user=Tester');
+      assert.equal(r.body.profile.country, 'US');
+      assert.equal(r.body.stats.chess_blitz.last.rating, 1500);
+      // Lichess explorer through the server, with the token kept server-side, then cached
+      const fen = encodeURIComponent('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1');
+
+      assert.equal((await j(`/api/lichess?fen=${fen}&ratings=1600&speeds=blitz`)).status, 401, 'refused without a token');
+      assert.equal((await j('/api/lichess-token', { method: 'POST', body: JSON.stringify({ token: 'bad token!' }) })).status, 400);
+      assert.deepEqual((await j('/api/lichess-token', { method: 'POST', body: JSON.stringify({ token: 'lip_testtoken123' }) })).body, { ok: true });
+      assert.equal((await j('/api/lichess-status')).body.token, true);
+      r = await j(`/api/lichess?fen=${fen}&ratings=1600&speeds=blitz`);
+      assert.equal(r.body.moves[0].san, 'e5');
+      const before = hits;
+      r = await j(`/api/lichess?fen=${fen}&ratings=1600&speeds=blitz`);
+      assert.equal(hits, before, 'second lookup comes from the cache');
+      assert.equal((await j('/api/lichess?fen=nonsense')).status, 400);
       // localhost host name is accepted
       assert.equal((await raw(s.port, { pathName: '/api/store?name=custom', host: `localhost:${s.port}` })).status, 200);
     } finally {

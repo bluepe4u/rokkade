@@ -6,6 +6,7 @@ import { playerProfile, priorities } from './guide.js';
 import { plural, pct } from './games.js';
 import { puzzleQueue, focusFor } from './puzzles.js';
 import { trackedFor } from './progressview.js';
+import { goalsHTML, bindGoals, weekHTML } from './goalsview.js';
 
 const WEEKS = 12;
 
@@ -73,7 +74,7 @@ export function renderToday(view, C, S, { quiet = false } = {}) {
   });
   steps.push({
     key: 'review', title: latest ? `Review your game against ${esc(latest.opp)}` : 'Review a game',
-    sub: latest ? `${latest.sc === 1 ? 'Won' : latest.sc === 0.5 ? 'Drawn' : 'Lost'} · ${esc(latest.fam)}${C.reviewIdx[latest.id] ? ` · your accuracy ${C.reviewIdx[latest.id][latest.col]}%` : ''}. Find your first mistake before you look.` : 'Import your chess.com games in Analyse → Games, or play one here.',
+    sub: latest ? `${latest.sc === 1 ? 'Won' : latest.sc === 0.5 ? 'Drawn' : 'Lost'} · ${esc(latest.fam)}${C.reviewIdx[latest.id] ? ` · your accuracy ${C.calAcc(C.reviewIdx[latest.id][latest.col])}%` : ''}. Find your first mistake before you look.` : 'Import your chess.com games in Analyse → Games, or play one here.',
     done: !!d.review, href: latest ? `#review/${encodeURIComponent(latest.id)}` : '#games', cta: 'Review',
   });
   steps.push({
@@ -97,14 +98,14 @@ export function renderToday(view, C, S, { quiet = false } = {}) {
   // ── progress tiles
   const tc = p?.main?.tc;
   const ratings = tc ? C.games.filter((x) => x.tc === tc).slice(-40).map((x) => x.myR) : [];
-  const accs = C.games.filter((x) => C.reviewIdx[x.id]).slice(-30).map((x) => C.reviewIdx[x.id][x.col]);
+  const accs = C.games.filter((x) => C.reviewIdx[x.id]).slice(-30).map((x) => C.calAcc(C.reviewIdx[x.id][x.col]));
   const accRecent = accs.slice(-10);
   const accAvg = accRecent.length ? accRecent.reduce((a, b) => a + b, 0) / accRecent.length : null;
   const accPrev = accs.slice(-20, -10);
   const accPrevAvg = accPrev.length ? accPrev.reduce((a, b) => a + b, 0) / accPrev.length : null;
   const learned = learnedCount(prog);
   const studied = disc.filter((x) => x.status === 'studied').length;
-  const tomorrow = Object.entries(prog.srs).filter(([k, e]) => !k.startsWith('pz|') && e.due === addDays(today, 1)).length;
+  const tomorrow = Object.entries(prog.srs).filter(([k, e]) => (k.startsWith('w|') || k.startsWith('b|')) && e.due === addDays(today, 1)).length;
   const tracked = C.games.length ? trackedFor(C) : [];
 
   view.innerHTML = `
@@ -125,6 +126,7 @@ export function renderToday(view, C, S, { quiet = false } = {}) {
       <span class="step-body"><b>${s.title}</b><small>${s.sub}</small></span>
       <a class="btn ${s.done ? 'ghost' : 'cta'} sm" href="${s.href}">${s.done ? 'Again' : s.cta} <span class="arrow">→</span></a></li>`).join('')}</ol>
 
+    <div class="today-grid">${goalsHTML(C)}${weekHTML(C)}</div>
     <div class="today-grid">
       <section class="panel-card rise">
         <div class="row"><h2 class="h3" style="margin:0">Practice calendar</h2><span class="spacer"></span><span class="note">less</span><span class="cal-key">${[0, 1, 2, 3, 4].map((l) => `<i class="l${l}"></i>`).join('')}</span><span class="note">more</span></div>
@@ -140,6 +142,7 @@ export function renderToday(view, C, S, { quiet = false } = {}) {
       </section>
     </div>
     ${!C.user ? `<section class="panel-card rise" style="margin-top:16px"><h2 class="h3">Connect your chess.com games</h2><p class="note">Outpost reviews every game in the background, finds the moves that surprise you, and builds your plan from them. <a class="link" href="#games">Import in Analyse → Games →</a></p></section>` : ''}`;
+  bindGoals(view, C);
   if (!quiet) { stagger(view, 55); countUp(view); }
   // goal ring fills after paint
   const r = $('.goal-ring', view);
