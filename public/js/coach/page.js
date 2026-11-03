@@ -9,7 +9,7 @@ import { ls, store } from './store.js';
 import { renderLibrary } from './trainer.js';
 import { renderReview, renderInsights, interactiveQueue } from './review.js';
 import { openStory } from './story.js';
-import { GUIDE_HTML } from './guide.js';
+import { buildGuide } from './guide.js';
 import { filtersHTML as fHTML, bindFilters as fBind } from './filters.js';
 const filtersHTML = () => fHTML(S, C.games);
 const bindFilters = (root, redraw) => fBind(S, root, redraw);
@@ -347,7 +347,11 @@ function bindGameSync() {
 
 // ───────────────────────── Guide ─────────────────────────
 function renderGuide() {
-  view.innerHTML = `<div class="guide">${GUIDE_HTML}</div>`;
+  const { html } = buildGuide({ user: C.user, games: C.games, an: S.an, lib: C.lib, discoveries: C.list() });
+  view.innerHTML = `<div class="guide">${html}</div>`;
+  stagger(view);
+  countUp(view);
+  requestAnimationFrame(() => $$('.hbar i', view).forEach((i) => { i.style.width = `${i.dataset.w}%`; }));
   $$('[data-fen]', view).forEach((x) => {
     const arrows = (x.dataset.ar || '').split(',').filter(Boolean).map((a) => { const [from, to] = a.split('-'); return { from, to, color: '#d9480f' }; });
     x.innerHTML = miniBoard(x.dataset.fen, 'w', { arrows });
@@ -373,6 +377,7 @@ function renderGuide() {
       S.an = (await store.get(`an-${C.user.toLowerCase()}`).catch(() => null)) || {};
       await C.ingest(C.games);
       if (current() === 'games') renderGames();
+      if (current() === 'guide') renderGuide();
     } catch (e) { console.warn(e); }
   }
   C.kick();

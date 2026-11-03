@@ -81,7 +81,7 @@ node tools/calibrate.mjs --elo 1500 --mode maia                            # the
 | **Games** | Import your public chess.com games (later updates only fetch new months). Score against rating expectation, advice, rating chart, your openings with *Strong* / *Weak* tags (95% margin, 15+ games), and *habits*: where you left the library on your own move, with *Drill the library move* or *Keep my move too*. |
 | **Review** | One game, move by move, with move classes (best, excellent, good, inaccuracy, mistake, miss, blunder, brilliant, great), accuracy, an evaluation graph, comments, and *Try this move again*. |
 | **Insights** | Stockfish over many games: blunders per game and by phase, the move of your first blunder, missed punishments, and the material you gave up, with puzzles from your own mistakes. |
-| **Guide** | Game plan, attacking patterns and a training routine. |
+| **Guide** | A game plan built from your own data: rating and form, your top priorities (blunders, clock, king safety, missed punishments, sacrifices, endgames, opening holes, a weaker colour, results after a loss), how your games are lost, time controls, your library and the openings you actually play, a move-by-move checklist tuned to your rating band, patterns chosen from your mistakes, and a weekly training plan weighted toward your priorities. It updates as you import, analyse and study. |
 
 ### Discoveries
 

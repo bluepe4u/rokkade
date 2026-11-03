@@ -462,7 +462,22 @@ a.btn.cta { color: var(--cta-foreground); }
 .reveal { margin-top: 8px; font-weight: 600; }
 
 /* ───── guide ───── */
-.guide { max-width: 760px; font-size: 15px; line-height: 1.65; }
+.guide { max-width: 920px; font-size: 15px; line-height: 1.65; }
+.guide .gcard { margin-bottom: 12px; }
+.guide .gcard ul, .guide .gcard ol { margin: 8px 0; padding-left: 20px; }
+.guide .gcard li { margin: 4px 0; }
+.guide .tiles { margin-bottom: 8px; }
+.guide .tile b { font-size: 22px; }
+.guide .hbar { grid-template-columns: 150px minmax(0, 1fr) 84px; }
+@media (max-width: 700px) { .guide .hbar { grid-template-columns: 96px minmax(0, 1fr) 70px; font-size: 12px; } }
+.prio { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 12px; }
+.prio-card { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 12px; margin: 0 !important; }
+.prio-n { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--cta); color: var(--cta-foreground); font: 700 14px var(--font-display); }
+.prio-card:first-child { border-left: 4px solid var(--cta); }
+.patterns { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 12px; }
+.pattern { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 14px; align-items: start; margin: 0 !important; }
+.guide .pattern .gmini { width: 150px; margin: 0; }
+@media (max-width: 700px) { .prio, .patterns { grid-template-columns: 1fr; } .pattern { grid-template-columns: 110px minmax(0, 1fr); } .guide .pattern .gmini { width: 110px; } }
 .guide h1 { font: 700 28px var(--font-display); margin: 34px 0 8px; }
 .guide h1:first-child { margin-top: 0; }
 .guide h2 { font: 600 19px var(--font-display); margin: 26px 0 8px; }

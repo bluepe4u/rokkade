@@ -175,3 +175,30 @@ test('discoveries: deep analysis grades every reply and builds the study line', 
   assert.equal(L.walk('w', [...line, 'h5']).type, 'end', 'past the end of a studied line is not a new hole');
   assert.equal(catchDiscoveries(L, [game('4', 'w', ['e4', 'a6', best])]).length, 0);
 });
+
+test('guide is built from the player data, with no fixed persona', async () => {
+  const { buildGuide, bandOf } = await import('../public/js/coach/guide.js');
+  const L = new Library();
+  const empty = buildGuide({ lib: L, games: [] });
+  assert.match(empty.html, /Import them/);
+  assert.doesNotMatch(empty.html, /poker|550|bluff/i);
+  // 40 blitz games: losses are on time, and Black does much worse than White
+  const games = [];
+  for (let i = 0; i < 40; i++) {
+    const col = i % 2 ? 'b' : 'w';
+    const sc = col === 'w' ? (i % 4 === 0 ? 0 : 1) : (i % 3 === 0 ? 1 : 0);
+    const me = { username: 'me', rating: 1300 + i, result: sc === 1 ? 'win' : 'timeout' };
+    const op = { username: `o${i}`, rating: 1300, result: sc === 1 ? 'resigned' : 'win' };
+    games.push({ ...game(String(i), col, ['e4', 'e5', 'Nf3', 'a6'], { sc, t: 1000 + i * 9000, ex: 0.5 }), myR: 1300 + i, tc: 'blitz', fam: col === 'w' ? 'Italian Game' : 'Sicilian Defense', g: { white: col === 'w' ? me : op, black: col === 'w' ? op : me } });
+  }
+  const r = buildGuide({ user: 'me', lib: L, games, an: {}, discoveries: [] });
+  assert.equal(r.profile.rating, 1339);
+  assert.equal(bandOf(1339).key, 'club');
+  assert.ok(r.priorities.some((p) => p.key === 'clock'), 'losses on time → clock priority');
+  assert.ok(r.priorities.some((p) => p.key === 'colour'), 'weak colour detected');
+  assert.match(r.html, /1339/);
+  assert.match(r.html, /Lift your results as Black/);
+  assert.doesNotMatch(r.html, /poker|bluff/i);
+  const total = r.plan.items.reduce((a, x) => a + x.min, 0);
+  assert.ok(Math.abs(total - r.plan.total) <= 25);
+});
