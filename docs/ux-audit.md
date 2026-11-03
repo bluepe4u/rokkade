@@ -31,3 +31,26 @@
 5. **Activity log** (`progress` store document): drills, studied discoveries, reviews, insight runs and games played on Play or chess.com count toward the day. The streak counts consecutive days with at least one activity.
 6. **Consistent motion** on Play and 4-Player: the same entrance rise for cards, the same header indicator and the same reduced-motion handling.
 7. **Wording.** Guide is renamed Plan. The header status says what is happening ("Analysing 4…Bc5 · depth 14/20", or "All positions analysed").
+
+## Added since: improvement features
+
+- **Puzzles from your own misses** (Study → Puzzles): every blunder you made ("find the better move") and every opponent blunder you didn't punish ("punish it"), taken from the background reviews. Combinations play out over two moves when the solution is forcing. A different move that the engine rates within 3 points also counts. Puzzles are scheduled with spaced repetition, and the queue starts with your current Plan priority (missed punishments, opening blunders, endgames…).
+- **Progress in your positions** (Analyse → Progress): for each opponent surprise and each habit position that came up in at least two games, your score before and after you started working on it, the work done (studied, drills, puzzles), a rolling 5-game score with the "since you started" part shaded, and a status (improving, steady, slipping, too early to tell). Today links to it.
+- **Explore in Review**: move any piece to try another move. Stockfish lines are drawn live. When it's the opponent's turn, their likely replies show as purple arrows, mixing Maia-2 at their rating with their own recent chess.com games ("opp89 played it 3 of 5").
+
+## Still missing, or not done as well as it should be
+
+Ordered by how much they'd help someone improve.
+
+1. **Calibrated accuracy and move classes.** Our accuracy formula and class thresholds are close to Lichess's but not tuned against chess.com's. Checking against the games' own `accuracies` field and fitting the curve would make the numbers comparable to what users see on chess.com.
+2. **Review depth.** Background reviews run at depth 12 for throughput. A second pass at depth 16 for recent and important games (losses, close games) would make "best move" claims more reliable, especially in sharp tactics.
+3. **Opening explorer with real statistics.** The library is a fixed repertoire tree. Adding Lichess masters/club statistics per position (move popularity and results) would show which replies opponents actually play most and which lines score well at the user's level.
+4. **Endgame and calculation training.** Puzzles only come from your own games, so endgame technique (basic positions such as Lucena, Philidor, opposition) and visualisation have no dedicated drills yet.
+5. **Time management analysis.** Clock data from PGNs is parsed but only used for "blunders under a minute". Showing time spent per move, time trouble by phase, and correlating thinking time with move quality would target a very common weakness.
+6. **Goals and milestones.** There is a streak and a daily goal, but no user-set target (e.g. "1500 rapid by March") with a projection, and no weekly summary ("this week: 14 drills, accuracy +3, rating +22").
+7. **Opponent preparation.** Explore already reads an opponent's games. A "Prepare for an opponent" page (their openings by colour, where they deviate, their results) before a club or online match would build on the same data.
+8. **Lichess import.** Only chess.com is supported; the Lichess API is just as open and a sizeable share of players use it.
+9. **Mobile ergonomics.** Layouts work at phone width, but drag-and-drop on small boards, a bottom tab bar and installable PWA behaviour (offline, home screen) would make daily use on a phone much better.
+10. **Accessibility.** Keyboard play on the board, screen-reader move announcements and a colour-blind-safe palette for move classes are not done yet.
+11. **Data portability.** No export or backup button for the `data/` folder, and no way to sync between two computers.
+12. **Notifications.** "3 lines due" and "new game reviewed" only show inside the app; a gentle optional browser notification once a day would support the daily habit.

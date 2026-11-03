@@ -2,6 +2,9 @@
 import { coach } from './service.js';
 import { setActive, GROUP_OF } from '../shell.js';
 import { renderToday } from './today.js';
+import { renderPuzzles, puzzleSessionActive } from './puzzleview.js';
+import { renderProgress } from './progressview.js';
+import { puzzleQueue } from './puzzles.js';
 import { $, $$, esc, miniBoard, countUp, ring, toast, since, when, stagger } from './ui.js';
 import { fenOf } from './discoveries.js';
 import { moveLabel, sanLine, positionAfter } from './library.js';
@@ -18,7 +21,7 @@ const bindFilters = (root, redraw) => fBind(S, root, redraw);
 
 const C = coach();
 const view = $('#view');
-const SECTIONS = ['today', 'discoveries', 'library', 'games', 'review', 'insights', 'plan', 'guide'];
+const SECTIONS = ['today', 'discoveries', 'library', 'puzzles', 'games', 'review', 'insights', 'progress', 'plan', 'guide'];
 export const S = {
   f: { tc: 'all', col: 'all', per: 'all', rated: 'all', ...ls.get('coach-f', {}) },
   disc: { side: 'all', show: 'todo', ...ls.get('sfet.coach.discFilter', {}) },
@@ -56,6 +59,8 @@ function paintDue() {
   const n = C.due().length;
   b.textContent = n ? String(n) : '';
   b.hidden = !n;
+  const pb = $('#pzBadge');
+  if (pb) { const m = puzzleQueue(C.puzzles(), C.prog).length; pb.textContent = m ? String(m) : ''; pb.hidden = !m; }
 }
 
 function renderBg() {
@@ -101,7 +106,7 @@ export async function route() {
     a.hidden = a.dataset.group !== group;
     if (a.dataset.sec === sec) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
-  document.title = `${{ today: 'Today', discoveries: 'Discoveries', library: 'Library', games: 'Games', review: 'Review', insights: 'Insights', plan: 'Plan' }[sec]} · Outpost`;
+  document.title = `${{ today: 'Today', discoveries: 'Discoveries', library: 'Library', puzzles: 'Puzzles', progress: 'Progress', games: 'Games', review: 'Review', insights: 'Insights', plan: 'Plan' }[sec]} · Outpost`;
   requestAnimationFrame(moveInk);
   if (sec === 'discoveries' && arg[0]) {
     if (lastSec !== 'discoveries') draw('discoveries', []);
@@ -120,6 +125,8 @@ function draw(sec, arg) {
   if (sec === 'today') renderToday(view, C, S);
   else if (sec === 'discoveries') renderDiscoveries();
   else if (sec === 'library') renderLibrary(view, C, arg);
+  else if (sec === 'puzzles') renderPuzzles(view, C, arg);
+  else if (sec === 'progress') renderProgress(view, C);
   else if (sec === 'games') renderGames();
   else if (sec === 'review') renderReview(view, C, S, arg);
   else if (sec === 'insights') renderInsights(view, C, S);
@@ -388,6 +395,8 @@ const LIVE = {
   today: () => renderToday(view, C, S, { quiet: true }),
   games: () => renderGames(),
   plan: () => renderGuide(),
+  progress: () => renderProgress(view, C, { quiet: true }),
+  puzzles: () => { if (!parseHash().arg[0] && !puzzleSessionActive()) renderPuzzles(view, C); },
   insights: () => renderInsights(view, C, S, { quiet: true }),
   review: () => { if (!parseHash().arg[0]) renderReview(view, C, S, [], { quiet: true }); },
 };
@@ -416,20 +425,20 @@ function refreshLive(secs) {
     if (sec === 'discoveries' && $('#story').hidden) renderDiscoveries(true);
     refreshLive(['today', 'plan']);
   });
-  C.addEventListener('reviewed', () => { renderBg(); refreshLive(['review', 'insights', 'today', 'plan']); });
+  C.addEventListener('reviewed', () => { renderBg(); refreshLive(['review', 'insights', 'today', 'plan', 'progress', 'puzzles']); });
   C.addEventListener('practice', () => { paintDue(); refreshLive(['today']); });
   C.addEventListener('synced', (e) => {
     renderAccount();
     const { fresh, discoveries } = e.detail || {};
     if (fresh) toast(`${plural(fresh, 'new game')} from chess.com${discoveries ? ` · ${plural(discoveries, 'new position')} to study` : ''}`);
-    refreshLive(['today', 'games', 'review', 'insights', 'plan']);
+    refreshLive(['today', 'games', 'review', 'insights', 'plan', 'puzzles', 'progress']);
   });
   route();
   if (C.user) {
     try {
       await C.loadGames();
       await C.ingest(C.games);
-      refreshLive(['today', 'games', 'review', 'insights', 'plan']);
+      refreshLive(['today', 'games', 'review', 'insights', 'plan', 'puzzles', 'progress']);
     } catch (e) { console.warn(e); }
   }
   C.kick();

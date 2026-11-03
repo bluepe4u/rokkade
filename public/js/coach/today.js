@@ -4,6 +4,8 @@ import { $, $$, esc, countUp, stagger } from './ui.js';
 import { dayKey, addDays, dayTotal, streak, learnedCount } from './progress.js';
 import { playerProfile, priorities } from './guide.js';
 import { plural, pct } from './games.js';
+import { puzzleQueue, focusFor } from './puzzles.js';
+import { trackedFor } from './progressview.js';
 
 const WEEKS = 12;
 
@@ -58,6 +60,12 @@ export function renderToday(view, C, S, { quiet = false } = {}) {
     sub: due.length ? `${[due.filter((x) => !x.isNew).length ? `${due.filter((x) => !x.isNew).length} due for review` : '', due.filter((x) => x.isNew).length ? `${due.filter((x) => x.isNew).length} new` : ''].filter(Boolean).join(', ')}. About ${Math.max(2, due.length * 1.5).toFixed(0)} minutes.` : (d.drill ? `${plural(d.drill, 'line')} drilled today.` : 'Nothing is due today.'),
     done: !due.length, href: due.length ? '#library/due' : '#library', cta: due.length ? 'Start' : 'Open',
   });
+  const pzq = puzzleQueue(C.puzzles(), prog, { focus: focus ? focusFor(focus.key) : null });
+  steps.push({
+    key: 'puzzles', title: pzq.length ? `Solve ${plural(Math.min(5, pzq.length), 'puzzle')} from your games` : 'Puzzles from your games',
+    sub: pzq.length ? `Positions where you went wrong or let your opponent off${focus && focusFor(focus.key) ? `, focused on: ${esc(focus.title.toLowerCase())}` : ''}.` : d.puzzle ? `${plural(d.puzzle, 'puzzle')} solved today.` : 'They appear as your games are reviewed.',
+    done: !pzq.length || (d.puzzle || 0) >= 5, href: '#puzzles', cta: 'Solve',
+  });
   steps.push({
     key: 'study', title: readyD ? `Study ${esc(readyD.label)}` : 'Study a new position',
     sub: readyD ? `From ${readyD.n === 1 ? 'one of your games' : `${readyD.n} of your games`}${readyD.status === 'new' ? ' · still being analysed' : ''}. Ends with the line in your library.` : d.study ? 'Done for today.' : 'Nothing waiting: new positions appear after your next games.',
@@ -96,7 +104,8 @@ export function renderToday(view, C, S, { quiet = false } = {}) {
   const accPrevAvg = accPrev.length ? accPrev.reduce((a, b) => a + b, 0) / accPrev.length : null;
   const learned = learnedCount(prog);
   const studied = disc.filter((x) => x.status === 'studied').length;
-  const tomorrow = Object.values(prog.srs).filter((e) => e.due === addDays(today, 1)).length;
+  const tomorrow = Object.entries(prog.srs).filter(([k, e]) => !k.startsWith('pz|') && e.due === addDays(today, 1)).length;
+  const tracked = C.games.length ? trackedFor(C) : [];
 
   view.innerHTML = `
     <section class="today-hero rise">
@@ -127,6 +136,7 @@ export function renderToday(view, C, S, { quiet = false } = {}) {
         <div class="tile rise"><span class="eyebrow">Accuracy</span><b>${accAvg != null ? `${accAvg.toFixed(1)}` : '–'}</b>${spark(accs, { min: 0, max: 100 })}<span>${accAvg != null ? `last 10 reviewed games${accPrevAvg != null ? ` · ${accAvg >= accPrevAvg ? '+' : '−'}${Math.abs(accAvg - accPrevAvg).toFixed(1)} vs the 10 before` : ''}` : 'Reviews run in the background after import'}</span></div>
         <div class="tile rise"><span class="eyebrow">Lines learned</span><b data-count="${learned}">${learned}</b><span>${tomorrow ? `${plural(tomorrow, 'line')} due tomorrow` : 'in spaced repetition'}</span></div>
         <div class="tile rise"><span class="eyebrow">Positions studied</span><b data-count="${studied}">${studied}</b><span>${waiting.length ? `${waiting.length} waiting in Discoveries` : 'from your own games'}</span></div>
+        ${tracked.length ? `<a class="tile rise tile-link" href="#progress"><span class="eyebrow">Your positions</span><b>${tracked.filter((t) => t.status === 'improving').length}<small> improving</small></b><span>${tracked.filter((t) => t.status === 'slipping').length} slipping · ${tracked.filter((t) => t.worked).length} worked on · see Progress →</span></a>` : ''}
       </section>
     </div>
     ${!C.user ? `<section class="panel-card rise" style="margin-top:16px"><h2 class="h3">Connect your chess.com games</h2><p class="note">Outpost reviews every game in the background, finds the moves that surprise you, and builds your plan from them. <a class="link" href="#games">Import in Analyse → Games →</a></p></section>` : ''}`;

@@ -10,8 +10,8 @@ One header everywhere, in the order of the improvement loop:
 | --- | --- |
 | **Today** | Home. Today's session (drill due lines, study a new position, review your latest game, play a game), streak and daily goal, a 12-week practice calendar, progress tiles. |
 | **Play** | The Elo terminal: play either side against a solver of any strength from 0 to 3000 Elo, with its n best moves and their material outcome. [Details](#play-the-elo-terminal). |
-| **Study** | *Discoveries* (positions where opponents left your library, turned into lessons) and *Library* (your opening tree, explored or drilled). [Details](#study-and-analyse). |
-| **Analyse** | *Games* (chess.com import, stats, habits), *Review* (every game reviewed in the background) and *Insights* (patterns across all reviewed games). |
+| **Study** | *Discoveries* (positions where opponents left your library, turned into lessons), *Library* (your opening tree, explored or drilled) and *Puzzles* (from your own blunders and missed punishments). [Details](#study-and-analyse). |
+| **Analyse** | *Games* (chess.com import, stats, habits), *Review* (every game reviewed in the background, with *what if* exploration), *Insights* (patterns across all reviewed games) and *Progress* (how you do in the positions you work on). |
 | **Plan** | Your game plan, generated from your data: priorities, how your games are lost, openings, patterns to learn, a weekly training plan. |
 | **4-Player** | Four-player chess, FFA and Teams. [Details](#four-player-chess). |
 
@@ -95,6 +95,12 @@ node tools/calibrate.mjs --elo 1500 --mode maia                            # the
 | **Review** | Every imported game is reviewed in the background (newest first), so any game opens instantly: accuracy rings, a move-class strip per player, a smooth evaluation graph with hover and key moments, a comment on every move with the best line (which can be played out on the board), *Find a better move*, play-through, and accuracy by phase. |
 | **Insights** | Patterns across all reviewed games, filled in automatically: blunders per game and by phase, the move of your first blunder, missed punishments, material you gave up, and puzzles from your own mistakes. |
 | **Plan** | A game plan built from your own data: rating and form, your top priorities (blunders, clock, king safety, missed punishments, sacrifices, endgames, opening holes, a weaker colour, results after a loss), how your games are lost, time controls, your library and the openings you actually play, a move-by-move checklist tuned to your rating band, patterns chosen from your mistakes, and a weekly training plan weighted toward your priorities. It updates as you import, analyse and study. |
+
+### Puzzles, progress and exploring
+
+- **Puzzles** (Study → Puzzles) come from your reviewed games: every blunder you made ("find the better move") and every opponent blunder you didn't punish ("punish it"). Forcing solutions play out over two moves. Another move counts too if the engine rates it within 3 points. Puzzles come back with spaced repetition, and today's queue starts with your top Plan priority.
+- **Progress** (Analyse → Progress) follows each opponent surprise and habit position that came up in at least two games. It shows your score before and after you started working on it (studying, drilling, puzzles), the work done, a rolling 5-game score and whether it's improving, steady or slipping.
+- **What if** (Review): move any piece to explore another move. Stockfish's top three lines are drawn live. On the opponent's turn, their likely replies appear as purple arrows, from Maia-2 at their rating mixed with their own recent chess.com games (*Use opp's own games*, last 3 months).
 
 ### Practice and progress
 

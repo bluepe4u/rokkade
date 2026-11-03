@@ -6,6 +6,8 @@ import { EngineQueue, reviewGame, bookPlies, reviewDocName, insightFromReview, r
 import { store, ls } from './store.js';
 import { prepGames } from './games.js';
 import * as P from './progress.js';
+import { buildPuzzles } from './puzzles.js';
+import { Chess } from '../../vendor/chess.js';
 import { DOC, DEPTH, catchDiscoveries, mergeDocs, mergeItem, summarize, analyseDiscovery, statusOf, studiedLine } from './discoveries.js';
 
 const LEASE = 'sfet.coach.lease';
@@ -87,6 +89,70 @@ class CoachService extends EventTarget {
   }
 
   due() { return P.dueLines(this.prog, this.lib); }
+
+  /** Puzzles from your reviewed games (rebuilt when reviews change). */
+  puzzles() {
+    const n = Object.keys(this.an).length * 1000 + this.games.length;
+    if (this.pzCache?.n !== n) this.pzCache = { n, list: buildPuzzles(this.games, this.an) };
+    return this.pzCache.list;
+  }
+
+  /** A puzzle attempt finished; clean = solved without a mistake or hint. */
+  async solvePuzzle(id, clean) {
+    P.reviewLine(this.prog, P.puzzleKey(id), clean);
+    P.logActivity(this.prog, 'puzzle', { id });
+    await this.#saveProgress();
+  }
+
+  /**
+   * The moves a chess.com opponent actually plays, from their own public games (last 3 months):
+   * Map(position key → {total, moves: Map(san → {n, score})}) for positions where they were to move.
+   */
+  async opponentBook(name, onStep) {
+    const key = String(name || '').toLowerCase();
+    this.oppBooks ||= new Map();
+    if (this.oppBooks.has(key)) return this.oppBooks.get(key);
+    const { api } = await import('./store.js');
+    const ar = await api(`/api/archives?user=${encodeURIComponent(name)}`);
+    const months = ar.months.slice(-3);
+    let i = 0;
+    for (const ym of months) {
+      if (ar.todo.includes(ym)) await api(`/api/month?user=${encodeURIComponent(name)}&ym=${ym}`);
+      onStep?.(++i, months.length);
+    }
+    const r = await api(`/api/games?user=${encodeURIComponent(name)}`);
+    const recent = new Set(months);
+    const book = new Map();
+    let games = 0;
+    for (const g of r.games) {
+      if (g.rules !== 'chess') continue;
+      const d = new Date(g.end_time * 1000);
+      if (!recent.has(`${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}`)) continue;
+      const col = (g.white?.username || '').toLowerCase() === key ? 'w' : (g.black?.username || '').toLowerCase() === key ? 'b' : null;
+      if (!col) continue;
+      games++;
+      const me = col === 'w' ? g.white : g.black;
+      const sc = me.result === 'win' ? 1 : ['agreed', 'repetition', 'stalemate', 'insufficient', '50move', 'timevsinsufficient'].includes(me.result) ? 0.5 : 0;
+      const c = new Chess();
+      const sans = (await import('./games.js')).pgnSans(g.pgn);
+      for (let ply = 0; ply < Math.min(30, sans.length); ply++) {
+        const k = c.fen().split(' ').slice(0, 4).join(' ');
+        if (c.turn() === col) {
+          let e = book.get(k);
+          if (!e) { e = { total: 0, moves: new Map() }; book.set(k, e); }
+          e.total++;
+          const m = e.moves.get(sans[ply]) || { n: 0, score: 0 };
+          m.n++;
+          m.score += sc;
+          e.moves.set(sans[ply], m);
+        }
+        try { c.move(sans[ply]); } catch { break; }
+      }
+    }
+    const out = { name, games, book };
+    this.oppBooks.set(key, out);
+    return out;
+  }
 
   // ───── games ─────
   async loadGames() {

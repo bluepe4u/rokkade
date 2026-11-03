@@ -5,7 +5,7 @@
 
 export const DOC = 'progress';
 export const INTERVALS = [1, 3, 7, 16, 35, 75, 150];
-export const KINDS = ['drill', 'study', 'review', 'game', 'insight'];
+export const KINDS = ['drill', 'study', 'review', 'game', 'insight', 'puzzle'];
 export const NEW_PER_DAY = 2;
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -59,7 +59,7 @@ export function reviewLine(doc, key, clean, today = dayKey(), now = Date.now()) 
 export function dueLines(doc, lib, today = dayKey()) {
   const due = [];
   const fresh = [];
-  const introducedToday = Object.values(doc.srs).filter((e) => e.first === today).length;
+  const introducedToday = Object.entries(doc.srs).filter(([k, e]) => !k.startsWith('pz|') && e.first === today).length;
   for (const side of ['w', 'b']) {
     for (const { li, line } of lib.lines(side)) {
       if (line.w) continue;
@@ -75,7 +75,8 @@ export function dueLines(doc, lib, today = dayKey()) {
 }
 
 /** Lines learned: in spaced repetition with at least one clean drill. */
-export const learnedCount = (doc) => Object.values(doc.srs).filter((e) => e.reps > 0).length;
+export const learnedCount = (doc) => Object.entries(doc.srs).filter(([k, e]) => !k.startsWith('pz|') && e.reps > 0).length;
+export const puzzleKey = (id) => `pz|${id}`;
 
 export function mergeProgress(a, b) {
   const out = emptyProgress();

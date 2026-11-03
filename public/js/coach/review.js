@@ -12,6 +12,8 @@ import { filterGames, plural, pct } from './games.js';
 import { filtersHTML, bindFilters } from './filters.js';
 import { store } from './store.js';
 import { moveLabel, sanLine } from './library.js';
+import { Maia } from '../maia.js';
+import { evalText } from './analysis.js';
 
 const ENGINE_URL = new URL('../../engine/stockfish-19-lite-single.js', import.meta.url).href;
 let iq = null;
@@ -110,7 +112,7 @@ export async function renderReview(view, C, S, args = [], { quiet = false } = {}
 async function openGame(x, startP) {
   const { view, C } = RV;
   const tk = ++RV.tk;
-  Object.assign(RV, { x, R: null, retry: false, playing: false });
+  Object.assign(RV, { x, R: null, retry: false, playing: false, ex: null, book: RV.book?.name === x.opp ? RV.book : null });
   let R = await store.get(reviewDocName(x.id)).catch(() => null);
   if (!R) {
     view.innerHTML = `<a class="link back" href="#review">← All games</a><div class="rv-wait rise"><span class="ring spin"></span><div><h2 class="h3" style="margin:0">Reviewing this game…</h2><p class="note" id="rvp">Starting the engine</p></div></div><div class="progress" style="max-width:520px"><i id="rvb0"></i></div>`;
@@ -253,6 +255,7 @@ function drawGame() {
 
 function go(p, animate = true) {
   if (!RV.R) return;
+  RV.ex = null;
   RV.p = Math.max(0, Math.min(RV.R.san.length, p));
   RV.retry = false;
   drawBoard(animate);
@@ -307,7 +310,7 @@ function drawBoard(animate = true) {
   let html;
   const mine = i >= 0 && (i % 2 === 0) === (x.col === 'w');
   if (retry) html = `<div class="comment try"><h3>Find a better move</h3><p>${esc(RV.msg || 'Your move: tap a piece, then its square.')}</p></div>`;
-  else if (i < 0) html = `<div class="comment"><h3>${esc(x.name)}</h3><p>Step through with ← →, press Space to play the game through, or jump to a key moment.</p></div>`;
+  else if (i < 0) html = `<div class="comment"><h3>${esc(x.name)}</h3><p>Step through with ← →, press Space to play the game through, or jump to a key moment. Move any piece to explore what would have happened.</p></div>`;
   else {
     const q = reviewComment(R, i, x.fam);
     const err = ERROR_CLASSES.includes(q.k);
@@ -349,7 +352,139 @@ function drawBoard(animate = true) {
         drawBoard(false);
       },
     });
-  } else board.interactive(null);
+  } else {
+    // Any move on the board starts exploring "what if" from here (the game's own move just steps forward).
+    const g = new Chess(fen);
+    board.interactive({
+      canPick: (sq) => g.get(sq)?.color === g.turn(),
+      targets: (sq) => g.moves({ square: sq, verbose: true }).map((m) => m.to),
+      onMove: (from, to) => {
+        const mv = new Chess(fen).move({ from, to, promotion: 'q' });
+        if (p < R.san.length && mv.san === R.san[p]) { go(p + 1); return; }
+        RV.ex = { base: p, moves: [mv.san] };
+        drawExplore();
+      },
+    });
+  }
+}
+
+// ───────────────────────── explore: "what if I had played…" ─────────────────────────
+let maiaP = null;
+let maiaPct = 0;
+function maia() {
+  if (!maiaP) maiaP = Maia.load({ onProgress: (f) => { maiaPct = f; const el = $('#exMaia'); if (el) el.textContent = `Loading the human-move model… ${Math.round(f * 100)}%`; } }).catch((e) => { console.warn(e); maiaP = null; return null; });
+  return maiaP;
+}
+const RANKC = ['#2f6fb3', '#3f9a63', '#c98a2e'];
+
+function exFen() {
+  const { R, ex } = RV;
+  const { fens } = fensOf(R.san.slice(0, ex.base));
+  const c = new Chess(fens[ex.base]);
+  const moves = [];
+  for (const s of ex.moves) moves.push(c.move(s));
+  return { c, last: moves.at(-1) };
+}
+
+function drawExplore() {
+  const { R, x, ex, board } = RV;
+  const tk = ++RV.exTk || (RV.exTk = 1);
+  RV.exTk = tk;
+  const { c, last } = exFen();
+  const fen = c.fen();
+  board.setFen(fen, { lastMove: last ? [last.from, last.to] : [] });
+  board.setArrows([]);
+  board.badge(null);
+  const theirTurn = c.turn() !== x.col;
+  const oppName = x.opp;
+  const label = (i) => moveLabel(ex.base + i);
+  $('#rvc').innerHTML = `<div class="comment explore"><div class="cm-head"><span class="cm-chip" style="background:var(--engine)">?</span><div><b>What if…</b><span>exploring from ${ex.base ? `${moveLabel(ex.base - 1)}${esc(R.san[ex.base - 1])}` : 'the start'} · the game went ${ex.base < R.san.length ? esc(moveLabel(ex.base) + R.san[ex.base]) : 'no further'}</span></div><span class="cm-eval" id="exEval">…</span></div>
+    <div class="ex-line">${ex.moves.map((m, i) => `<button data-i="${i}" class="${i === ex.moves.length - 1 ? 'cur' : ''}">${(ex.base + i) % 2 === 0 || i === 0 ? label(i) : ''}${esc(m)}</button>`).join('')}</div>
+    <div id="exLines" class="ex-lines"><p class="note">Stockfish is thinking…</p></div>
+    ${theirTurn ? `<div class="ex-replies"><div class="row"><span class="eyebrow">How ${esc(oppName)} would likely answer</span><span class="spacer"></span>${x.src === 'chess.com' && !RV.book ? `<button class="btn sm" id="exBook">Use ${esc(oppName)}'s own games</button>` : ''}</div><div id="exReplies"><p class="note" id="exMaia">${maiaPct && maiaPct < 1 ? `Loading the human-move model… ${Math.round(maiaPct * 100)}%` : 'Predicting human replies…'}</p></div></div>` : `<p class="note">Your move: try one, or pick an engine line.</p>`}
+    <div class="row"><button class="btn sm" id="exUndo">◀ Undo</button><button class="btn sm ghost" id="exExit">Back to the game</button></div></div>`;
+  $$('.ex-line button').forEach((b) => { b.onclick = () => { ex.moves = ex.moves.slice(0, +b.dataset.i + 1); drawExplore(); }; });
+  $('#exUndo').onclick = () => { ex.moves.pop(); if (!ex.moves.length) { const p = ex.base; RV.ex = null; go(p); } else drawExplore(); };
+  $('#exExit').onclick = () => go(ex.base);
+  const bk = $('#exBook');
+  if (bk) bk.onclick = async () => {
+    bk.disabled = true;
+    try {
+      RV.book = await RV.C.opponentBook(oppName, (i, n) => { bk.textContent = `Loading ${oppName}'s games… ${i}/${n}`; });
+      drawExplore();
+    } catch (e) { bk.textContent = 'Could not load their games'; console.warn(e); }
+  };
+  board.interactive({
+    canPick: (sq) => c.get(sq)?.color === c.turn(),
+    targets: (sq) => c.moves({ square: sq, verbose: true }).map((m) => m.to),
+    onMove: (from, to) => { const mv = new Chess(fen).move({ from, to, promotion: 'q' }); ex.moves.push(mv.san); drawExplore(); },
+  });
+  if (c.isGameOver()) { $('#exLines').innerHTML = `<p class="note">${c.isCheckmate() ? 'Checkmate.' : 'Draw.'}</p>`; return; }
+  const state = { lines: [], human: null };
+  const wtm = c.turn() === 'w';
+  const paint = () => {
+    if (tk !== RV.exTk || !RV.ex) return;
+    const L = state.lines;
+    if (L.length) {
+      const top = L[0];
+      const w0 = wp(top.score);
+      const W = wtm ? w0 : 100 - w0;
+      $('#evf').style.height = `${W}%`;
+      $('#evb').classList.toggle('white-ahead', W >= 50);
+      $('#evt').textContent = evalText(top.score, wtm);
+      const ee = $('#exEval');
+      if (ee) ee.textContent = evalText(top.score, wtm);
+      $('#exLines').innerHTML = `<span class="eyebrow">Engine · depth ${top.depth || ''}</span>${L.map((l, i) => {
+        const pv = pvToSan(fen, l.pv, 7);
+        return `<button class="eline ex" data-san="${esc(pv[0] || '')}"><span class="rk" style="background:${RANKC[i]}">${i + 1}</span><span class="san">${esc(pv[0] || '')}</span><span class="ev">${evalText(l.score, wtm)}</span><span class="pv">${esc(pv.slice(1).join(' '))}</span></button>`;
+      }).join('')}`;
+      $$('#exLines [data-san]').forEach((b) => { b.onclick = () => { if (b.dataset.san) { ex.moves.push(b.dataset.san); drawExplore(); } }; });
+    }
+    const arrows = [];
+    if (theirTurn && state.human) {
+      state.human.slice(0, 3).forEach((h, i) => arrows.push({ from: h.uci.slice(0, 2), to: h.uci.slice(2, 4), color: '#8a63c9', width: 8 + 14 * h.p, opacity: 0.85, label: `${Math.round(h.p * 100)}`, key: `h${h.uci}` }));
+      if (L[0]) arrows.push({ from: L[0].pv[0].slice(0, 2), to: L[0].pv[0].slice(2, 4), color: RANKC[0], width: 9, opacity: 0.6, dashed: true, key: `e${L[0].pv[0]}` });
+    } else {
+      L.slice(0, 3).forEach((l, i) => arrows.push({ from: l.pv[0].slice(0, 2), to: l.pv[0].slice(2, 4), color: RANKC[i], width: 15 - i * 3, label: String(i + 1), key: `e${i}${l.pv[0]}` }));
+    }
+    RV.board.setArrows(arrows);
+    if (theirTurn && state.human) {
+      const evalOf = (uci) => L.find((l) => l.pv[0] === uci);
+      $('#exReplies').innerHTML = state.human.slice(0, 5).map((h) => {
+        const e = evalOf(h.uci);
+        return `<button class="reply" data-san="${esc(h.san)}"><b>${esc(h.san)}</b><span class="rbar"><i style="width:${Math.round(h.p * 100)}%"></i></span><span class="rp">${Math.round(h.p * 100)}%</span><small>${h.maia != null ? `players at ${x.opR}: ${Math.round(h.maia * 100)}%` : ''}${h.book ? ` · ${esc(oppName)} played it ${h.book.n} of ${h.bookTotal}` : ''}${e ? ` · engine ${evalText(e.score, wtm)}` : ''}</small></button>`;
+      }).join('') + (RV.book ? `<p class="note" style="margin:6px 0 0">Mixes ${esc(oppName)}'s own moves from ${plural(RV.book.games, 'recent game')} with how players rated ${x.opR} usually play.</p>` : `<p class="note" style="margin:6px 0 0">How players rated ${x.opR} usually play here (Maia-2).</p>`);
+      $$('#exReplies [data-san]').forEach((b) => { b.onclick = () => { ex.moves.push(b.dataset.san); drawExplore(); }; });
+    }
+  };
+  const q = interactiveQueue();
+  q.clear();
+  q.go(fen, { depth: 16, multipv: 3, movetime: 6000, onUpdate: (lines) => { state.lines = lines; paint(); } }).then((r) => { if (r) { state.lines = r.lines; paint(); } });
+  if (theirTurn) {
+    (async () => {
+      const legal = c.moves({ verbose: true });
+      const uci = legal.map((m) => m.from + m.to + (m.promotion || ''));
+      let probs = null;
+      const m = await maia();
+      if (m) { try { probs = (await m.predict(fen, x.opR || 1500, x.myR || 1500, uci)).probs; } catch (e) { console.warn(e); } }
+      if (tk !== RV.exTk) return;
+      const key = fen.split(' ').slice(0, 4).join(' ');
+      const bookE = RV.book?.book.get(key);
+      const rows = legal.map((mv, i) => {
+        const u = uci[i];
+        const maiaP = probs ? probs.get(u) : null;
+        const b = bookE?.moves.get(mv.san) || null;
+        const bookP = bookE ? (b ? b.n / bookE.total : 0) : null;
+        // Their own history counts more the more often they reached this position.
+        const wBook = bookE ? Math.min(0.8, bookE.total / 6) : 0;
+        const p = bookP != null ? wBook * bookP + (1 - wBook) * (maiaP ?? 0) : (maiaP ?? 0);
+        return { uci: u, san: mv.san, p, maia: maiaP, book: b, bookTotal: bookE?.total || 0 };
+      }).sort((a, b) => b.p - a.p);
+      if (!probs && !bookE) { $('#exReplies').innerHTML = '<p class="note">The human-move model could not be loaded; showing engine lines only.</p>'; return; }
+      state.human = rows;
+      paint();
+    })();
+  }
 }
 
 /** Play the engine's best line from the position before ply i, then return. */
@@ -376,6 +511,11 @@ async function showLine(i) {
 
 addEventListener('keydown', (e) => {
   if (!RV.R || !$('#rvBoard') || RV.retry || e.target.closest?.('input, select, textarea')) return;
+  if (RV.ex) {
+    if (e.key === 'ArrowLeft') { RV.ex.moves.pop(); if (!RV.ex.moves.length) go(RV.ex.base); else drawExplore(); }
+    if (e.key === 'Escape') go(RV.ex.base);
+    return;
+  }
   if (e.key === 'ArrowLeft') go(RV.p - 1);
   else if (e.key === 'ArrowRight') go(RV.p + 1);
   else if (e.key === 'Home') go(0);
