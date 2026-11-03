@@ -5,7 +5,7 @@
 
 export const DOC = 'progress';
 export const INTERVALS = [1, 3, 7, 16, 35, 75, 150];
-export const KINDS = ['drill', 'study', 'review', 'game', 'insight', 'puzzle'];
+export const KINDS = ['drill', 'study', 'review', 'game', 'insight', 'puzzle', 'train'];
 export const NEW_PER_DAY = 2;
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -13,8 +13,10 @@ const pad = (n) => String(n).padStart(2, '0');
 export const dayKey = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 export const addDays = (key, n) => { const [y, m, d] = key.split('-').map(Number); return dayKey(new Date(y, m - 1, d + n)); };
 export const lineKey = (side, san) => `${side}|${san.join(' ')}`;
+/** Library-line keys start with the side; puzzles (pz|), endgames (eg|) and calculation (calc|) don't. */
+export const isLineKey = (k) => k.startsWith('w|') || k.startsWith('b|');
 
-export const emptyProgress = () => ({ v: 1, goal: 3, days: {}, srs: {} });
+export const emptyProgress = () => ({ v: 1, goal: 3, days: {}, srs: {}, goals: [], goalsAt: 0 });
 
 /** Record one activity for today (deduplicated by `id` within the day). Returns true if counted. */
 export function logActivity(doc, kind, { id = null, today = dayKey() } = {}) {
@@ -59,7 +61,7 @@ export function reviewLine(doc, key, clean, today = dayKey(), now = Date.now()) 
 export function dueLines(doc, lib, today = dayKey()) {
   const due = [];
   const fresh = [];
-  const introducedToday = Object.entries(doc.srs).filter(([k, e]) => !k.startsWith('pz|') && e.first === today).length;
+  const introducedToday = Object.entries(doc.srs).filter(([k, e]) => isLineKey(k) && e.first === today).length;
   for (const side of ['w', 'b']) {
     for (const { li, line } of lib.lines(side)) {
       if (line.w) continue;
@@ -75,12 +77,15 @@ export function dueLines(doc, lib, today = dayKey()) {
 }
 
 /** Lines learned: in spaced repetition with at least one clean drill. */
-export const learnedCount = (doc) => Object.entries(doc.srs).filter(([k, e]) => !k.startsWith('pz|') && e.reps > 0).length;
+export const learnedCount = (doc) => Object.entries(doc.srs).filter(([k, e]) => isLineKey(k) && e.reps > 0).length;
 export const puzzleKey = (id) => `pz|${id}`;
 
 export function mergeProgress(a, b) {
   const out = emptyProgress();
   out.goal = b?.goal || a?.goal || 3;
+  const g = (b?.goalsAt || 0) >= (a?.goalsAt || 0) ? b : a;
+  out.goals = g?.goals || a?.goals || [];
+  out.goalsAt = Math.max(a?.goalsAt || 0, b?.goalsAt || 0);
   for (const src of [a, b]) {
     for (const [k, d] of Object.entries(src?.days || {})) {
       const o = (out.days[k] ||= {});

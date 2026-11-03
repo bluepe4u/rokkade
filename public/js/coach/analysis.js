@@ -329,7 +329,7 @@ export function reviewSummary(R) {
   const spark = R.ev.filter((_, i) => i % step === 0 || i === n - 1).map((e) => Math.round(e.w));
   const c = { w: {}, b: {} };
   R.cl.forEach((k, i) => { const side = i % 2 ? 'b' : 'w'; c[side][k] = (c[side][k] || 0) + 1; });
-  return { w: R.acc.w, b: R.acc.b, s: spark, c, d: R.d };
+  return { w: R.acc.w, b: R.acc.b, s: spark, c, d: R.d, l: R.loss.map((v) => Math.round(v)) };
 }
 
 /** Accuracy per phase for one side: {Opening, Middlegame, Endgame} (null where the side made no move). */

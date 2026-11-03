@@ -7,6 +7,7 @@ import { store, ls } from './store.js';
 import { prepGames } from './games.js';
 import * as P from './progress.js';
 import { buildPuzzles } from './puzzles.js';
+import { calibrationPairs, fitCalibration, applyCalibration } from './calibration.js';
 import { Chess } from '../../vendor/chess.js';
 import { DOC, DEPTH, catchDiscoveries, mergeDocs, mergeItem, summarize, analyseDiscovery, statusOf, studiedLine } from './discoveries.js';
 
@@ -19,9 +20,9 @@ const TAB = Math.random().toString(36).slice(2);
 /** Analysis depths; ?depth=N (or localStorage sfet.coach.depth) lowers them for quick tests. */
 function depthConfig() {
   let d = Number(new URLSearchParams(location.search).get('depth')) || Number(ls.get('sfet.coach.depth', 0));
-  if (!d) return { ...DEPTH, review: 12 };
+  if (!d) return { ...DEPTH, review: 12, deep: 16 };
   d = Math.max(4, Math.min(DEPTH.main, d));
-  return { main: d, mainTime: 8000, reply: Math.max(4, d - 2), replyTime: 4000, idea: Math.max(4, d - 4), ideaTime: 1500, review: Math.min(12, d) };
+  return { main: d, mainTime: 8000, reply: Math.max(4, d - 2), replyTime: 4000, idea: Math.max(4, d - 4), ideaTime: 1500, review: Math.min(12, d), deep: Math.min(16, d + 2) };
 }
 
 export const readyCount = () => Number(ls.get(BADGE, 0)) || 0;
@@ -97,6 +98,19 @@ class CoachService extends EventTarget {
     return this.pzCache.list;
   }
 
+  async setGoals(goals) {
+    this.prog.goals = goals;
+    this.prog.goalsAt = Date.now();
+    await this.#saveProgress();
+  }
+
+  /** A training exercise finished (key: eg|id or calc|id). */
+  async trainResult(key, clean) {
+    P.reviewLine(this.prog, key, clean);
+    P.logActivity(this.prog, 'train', { id: key });
+    await this.#saveProgress();
+  }
+
   /** A puzzle attempt finished; clean = solved without a mistake or hint. */
   async solvePuzzle(id, clean) {
     P.reviewLine(this.prog, P.puzzleKey(id), clean);
@@ -108,26 +122,30 @@ class CoachService extends EventTarget {
    * The moves a chess.com opponent actually plays, from their own public games (last 3 months):
    * Map(position key → {total, moves: Map(san → {n, score})}) for positions where they were to move.
    */
+  /** A chess.com player's public games from the last `months` months (cached in data/users). */
+  async playerGames(name, months = 3, onStep) {
+    const { api } = await import('./store.js');
+    const ar = await api(`/api/archives?user=${encodeURIComponent(name)}`);
+    const want = ar.months.slice(-months);
+    let i = 0;
+    for (const ym of want) {
+      if (ar.todo.includes(ym)) await api(`/api/month?user=${encodeURIComponent(name)}&ym=${ym}`);
+      onStep?.(++i, want.length);
+    }
+    const r = await api(`/api/games?user=${encodeURIComponent(name)}`);
+    const recent = new Set(want);
+    return r.games.filter((g) => { const d = new Date(g.end_time * 1000); return recent.has(`${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}`); });
+  }
+
   async opponentBook(name, onStep) {
     const key = String(name || '').toLowerCase();
     this.oppBooks ||= new Map();
     if (this.oppBooks.has(key)) return this.oppBooks.get(key);
-    const { api } = await import('./store.js');
-    const ar = await api(`/api/archives?user=${encodeURIComponent(name)}`);
-    const months = ar.months.slice(-3);
-    let i = 0;
-    for (const ym of months) {
-      if (ar.todo.includes(ym)) await api(`/api/month?user=${encodeURIComponent(name)}&ym=${ym}`);
-      onStep?.(++i, months.length);
-    }
-    const r = await api(`/api/games?user=${encodeURIComponent(name)}`);
-    const recent = new Set(months);
+    const raw = await this.playerGames(name, 3, onStep);
     const book = new Map();
     let games = 0;
-    for (const g of r.games) {
+    for (const g of raw) {
       if (g.rules !== 'chess') continue;
-      const d = new Date(g.end_time * 1000);
-      if (!recent.has(`${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}`)) continue;
       const col = (g.white?.username || '').toLowerCase() === key ? 'w' : (g.black?.username || '').toLowerCase() === key ? 'b' : null;
       if (!col) continue;
       games++;
@@ -335,23 +353,39 @@ class CoachService extends EventTarget {
     const d = this.list().find((s) => s.status === 'new' && !s.analysis?.over);
     if (d) return { kind: 'disc', s: d };
     if (this.reviewsOff) return null;
-    const legacy = this.games.find((x) => this.reviewIdx[x.id] && !this.reviewIdx[x.id].s && !this.legacyDone?.has(x.id));
+    const legacy = this.games.find((x) => this.reviewIdx[x.id] && (!this.reviewIdx[x.id].s || !this.reviewIdx[x.id].l) && !this.legacyDone?.has(x.id));
     if (legacy) return { kind: 'legacy', x: legacy };
     for (let i = this.games.length - 1; i >= 0; i--) {
       const x = this.games[i];
       if (x.sans.length >= 2 && !this.reviewIdx[x.id]) return { kind: 'review', x };
     }
-    return null;
+    if (this.deepOff) return null;
+    const now = Date.now() / 1000;
+    const deep = this.games.filter((x) => x.sans.length >= 2 && (this.reviewIdx[x.id]?.d || 0) < this.depth.deep && !this.deepDone?.has(x.id));
+    if (!deep.length) return null;
+    const prio = (x) => (now - x.t < 60 * 86400 ? 2 : 0) + (x.sc === 0 ? 1 : 0) + (x.sc === 0.5 ? 0.5 : 0) + x.t / 1e10;
+    deep.sort((a, b) => prio(b) - prio(a));
+    return { kind: 'review', x: deep[0], deep: true };
   }
 
-  /** Background review progress: {done, total}. */
+  /** Accuracy calibrated to chess.com (identity until enough games have both numbers). */
+  get cal() {
+    const n = Object.keys(this.reviewIdx).length;
+    if (this.calCache?.n !== n || this.calCache.g !== this.games.length) this.calCache = { n, g: this.games.length, cal: fitCalibration(calibrationPairs(this.games, this.reviewIdx)) };
+    return this.calCache.cal;
+  }
+
+  calAcc(raw) { return applyCalibration(raw, this.cal); }
+
+  /** Background review progress: {done, total, deep}. */
   reviewProgress() {
     const total = this.games.filter((x) => x.sans.length >= 2).length;
-    return { done: this.games.filter((x) => this.reviewIdx[x.id]).length, total };
+    return { done: this.games.filter((x) => this.reviewIdx[x.id]).length, total, deep: this.games.filter((x) => (this.reviewIdx[x.id]?.d || 0) >= this.depth.deep).length };
   }
 
   /** Store a finished review (also used when the Review screen computes one itself). */
   async saveReview(x, R) {
+    if ((this.reviewIdx[x.id]?.d || 0) > R.d && this.reviewIdx[x.id]?.l) return;
     await store.set(reviewDocName(x.id), R);
     this.reviewIdx[x.id] = reviewSummary(R);
     const ins = insightFromReview(x, R);
@@ -393,18 +427,19 @@ class CoachService extends EventTarget {
           let i = 0;
           const n = x.sans.length + 1;
           const R = await reviewGame(this.queue, x.sans, {
-            depth: this.depth.review,
+            depth: job.deep ? this.depth.deep : this.depth.review,
             bookPlies: bookPlies(x, this.lib.walk(x.col, x.sans).ply),
             isCancelled: () => this.paused,
             tick: () => {
               i++;
               if (i % 4 && i !== n) return;
-              this.progress = { kind: 'review', id: x.id, i, n, label: `${x.opp} (${x.col === 'w' ? 'White' : 'Black'})` };
+              this.progress = { kind: 'review', deep: !!job.deep, id: x.id, i, n, label: `${x.opp} (${x.col === 'w' ? 'White' : 'Black'})` };
               this.dispatchEvent(new Event('progress'));
               this.channel?.postMessage({ type: 'progress', from: TAB, progress: this.progress });
             },
           });
           if (!R) break;
+          if (job.deep) (this.deepDone ||= new Set()).add(x.id);
           await this.saveReview(x, R);
           this.progress = null;
           this.dispatchEvent(new Event('progress'));

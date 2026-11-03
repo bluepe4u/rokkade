@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fallback zero-dependency server (used when Node.js is not installed): serves public/ and the
 Coach API (same endpoints and data layout as server.js). Usage: python serve.py [port]"""
-import functools, http.server, json, os, re, sys, time, urllib.error, urllib.parse, urllib.request, webbrowser
+import functools, hashlib, http.server, json, os, re, sys, time, urllib.error, urllib.parse, urllib.request, webbrowser
 from pathlib import Path
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else int(os.environ.get("PORT", 8080))
@@ -14,12 +14,19 @@ USER_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 YM_RE = re.compile(r"^\d{4}/\d{2}$")
 STORE_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 MAX_BODY = 32 * 1024 * 1024
-KEEP = ("uuid", "url", "pgn", "time_class", "rules", "rated", "end_time", "eco", "accuracies")
+KEEP = ("uuid", "url", "pgn", "time_class", "time_control", "rules", "rated", "end_time", "eco", "accuracies")
+EXPLORER = os.environ.get("LICHESS_EXPLORER_BASE", "https://explorer.lichess.ovh").rstrip("/")
+FEN_RE = re.compile(r"^[1-8pnbrqkPNBRQK/]+ [wb] [KQkq-]+ [a-h1-8-]+( \d+ \d+)?$")
+EXPLORER_TTL = 30 * 86400
 
 
-def fetch(url):
+def token_file():
+    return DATA / "lichess-token.txt"
+
+
+def fetch(url, extra=None):
     for attempt in range(4):
-        req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
+        req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json", **(extra or {})})
         try:
             with urllib.request.urlopen(req, timeout=45) as r:
                 return json.loads(r.read().decode("utf-8"))
@@ -91,9 +98,47 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self.send_json({"error": "bad name"}, 400)
             f = DATA / "store" / f"{name}.json"
             return self.send_json(json.loads(f.read_text("utf-8")) if f.exists() else None)
+        if path == "/api/lichess-status":
+            f = token_file()
+            return self.send_json({"token": bool(os.environ.get("LICHESS_EXPLORER_BASE")) or (f.exists() and len(f.read_text().strip()) > 0)})
+        if path == "/api/lichess":
+            fen = q.get("fen", "")
+            ratings = re.sub(r"[^0-9,]", "", q.get("ratings", ""))
+            speeds = re.sub(r"[^a-z,]", "", q.get("speeds", ""))
+            if not FEN_RE.match(fen):
+                return self.send_json({"error": "bad fen"}, 400)
+            qs = f"variant=standard&fen={urllib.parse.quote(fen)}&ratings={ratings}&speeds={speeds}&moves=12&topGames=0&recentGames=0"
+            d = DATA / "cache" / "explorer"
+            d.mkdir(parents=True, exist_ok=True)
+            f = d / (hashlib.sha1(qs.encode()).hexdigest() + ".json")
+            if f.exists() and time.time() - f.stat().st_mtime < EXPLORER_TTL:
+                return self.send_json(json.loads(f.read_text("utf-8")))
+            tok = token_file().read_text().strip() if token_file().exists() else ""
+            if not tok and not os.environ.get("LICHESS_EXPLORER_BASE"):
+                return self.send_json({"error": "no-token"}, 401)
+            try:
+                j = fetch(f"{EXPLORER}/lichess?{qs}", {"Authorization": f"Bearer {tok}"} if tok else None)
+            except urllib.error.HTTPError as e:
+                if e.code in (401, 403):
+                    return self.send_json({"error": "bad-token"}, 401)
+                if e.code == 429:
+                    return self.send_json({"error": "Lichess is rate-limiting; try again in a minute."}, 429)
+                raise
+            f.write_text(json.dumps(j), "utf-8")
+            return self.send_json(j)
         user = q.get("user", "")
         if not USER_RE.match(user):
             return self.send_json({"error": "That does not look like a chess.com username."}, 400)
+        if path == "/api/player":
+            u0 = urllib.parse.quote(user.lower())
+            profile = fetch(f"{API_BASE}/pub/player/{u0}")
+            try:
+                stats = fetch(f"{API_BASE}/pub/player/{u0}/stats")
+            except Exception:
+                stats = {}
+            return self.send_json({"profile": {"username": profile.get("username"), "name": profile.get("name", ""), "avatar": profile.get("avatar", ""),
+                                               "country": profile.get("country", "").split("/")[-1], "joined": profile.get("joined", 0),
+                                               "last_online": profile.get("last_online", 0), "title": profile.get("title", "")}, "stats": stats})
         u = urllib.parse.quote(user.lower())
         if path == "/api/archives":
             arch = fetch(f"{API_BASE}/pub/player/{u}/games/archives").get("archives", [])
@@ -119,8 +164,25 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         u = urllib.parse.urlparse(self.path)
         origin = urllib.parse.urlparse(self.headers.get("Origin", "")).hostname
-        if not self.local_ok() or origin not in (None, "127.0.0.1", "localhost") or u.path != "/api/store":
+        if not self.local_ok() or origin not in (None, "127.0.0.1", "localhost") or u.path not in ("/api/store", "/api/lichess-token"):
             return self.send_error(403)
+        if u.path == "/api/lichess-token":
+            n = int(self.headers.get("Content-Length", 0))
+            if n > 4096:
+                return self.send_json({"error": "too large"}, 413)
+            try:
+                tok = str(json.loads(self.rfile.read(n) or b"{}").get("token", "")).strip()
+            except ValueError:
+                return self.send_json({"error": "not JSON"}, 400)
+            if tok and not re.match(r"^[A-Za-z0-9_-]{8,200}$", tok):
+                return self.send_json({"error": "That does not look like a Lichess token."}, 400)
+            DATA.mkdir(parents=True, exist_ok=True)
+            if tok:
+                token_file().write_text(tok)
+                os.chmod(token_file(), 0o600)
+            elif token_file().exists():
+                token_file().unlink()
+            return self.send_json({"ok": True})
         name = urllib.parse.parse_qs(u.query).get("name", [""])[0]
         if not STORE_RE.match(name):
             return self.send_json({"error": "bad name"}, 400)

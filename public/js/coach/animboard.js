@@ -271,6 +271,9 @@ export class AnimBoard {
     this.setMarks({ ...this.marks, selected: null, targets: [] });
   }
 
+  /** Square under a screen point (or null). */
+  squareAt(x, y) { return this.#sqAt(x, y); }
+
   #sqAt(x, y) {
     const r = this.sqLayer.getBoundingClientRect();
     const c = Math.floor(((x - r.left) / r.width) * 8);
