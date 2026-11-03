@@ -2,9 +2,10 @@
 // background analyser. One tab analyses at a time (a localStorage lease); all tabs hear about changes.
 import { Engine } from '../engine.js';
 import { Library, moveLabel } from './library.js';
-import { EngineQueue } from './analysis.js';
+import { EngineQueue, reviewGame, bookPlies, reviewDocName, insightFromReview, reviewSummary } from './analysis.js';
 import { store, ls } from './store.js';
 import { prepGames } from './games.js';
+import * as P from './progress.js';
 import { DOC, DEPTH, catchDiscoveries, mergeDocs, mergeItem, summarize, analyseDiscovery, statusOf, studiedLine } from './discoveries.js';
 
 const LEASE = 'sfet.coach.lease';
@@ -16,9 +17,9 @@ const TAB = Math.random().toString(36).slice(2);
 /** Analysis depths; ?depth=N (or localStorage sfet.coach.depth) lowers them for quick tests. */
 function depthConfig() {
   let d = Number(new URLSearchParams(location.search).get('depth')) || Number(ls.get('sfet.coach.depth', 0));
-  if (!d) return DEPTH;
+  if (!d) return { ...DEPTH, review: 12 };
   d = Math.max(4, Math.min(DEPTH.main, d));
-  return { main: d, mainTime: 8000, reply: Math.max(4, d - 2), replyTime: 4000, idea: Math.max(4, d - 4), ideaTime: 1500 };
+  return { main: d, mainTime: 8000, reply: Math.max(4, d - 2), replyTime: 4000, idea: Math.max(4, d - 4), ideaTime: 1500, review: Math.min(12, d) };
 }
 
 export const readyCount = () => Number(ls.get(BADGE, 0)) || 0;
@@ -39,6 +40,8 @@ class CoachService extends EventTarget {
     this.doc = { v: 1, items: {} };
     this.user = ls.get('coach-user', '');
     this.games = [];
+    this.reviewIdx = {}; // game id → reviewSummary (accuracy, sparkline, class counts)
+    this.an = {}; // game id → Insights record
     this.depth = depthConfig();
     this.progress = null; // {id, stage, depth}
     this.channel = 'BroadcastChannel' in self ? new BroadcastChannel('sfet-coach') : null;
@@ -55,9 +58,35 @@ class CoachService extends EventTarget {
     this.custom = (await store.get('custom').catch(() => null)) || [];
     this.lib.applyCustom(this.custom);
     this.doc = mergeDocs({ items: {} }, (await store.get(DOC).catch(() => null)) || {});
+    this.prog = P.mergeProgress(P.emptyProgress(), (await store.get(P.DOC).catch(() => null)) || {});
     this.#publishBadge();
     return this;
   }
+
+  // ───── practice log and spaced repetition ─────
+  async #saveProgress() {
+    const latest = (await store.get(P.DOC).catch(() => null)) || {};
+    this.prog = P.mergeProgress(latest, this.prog);
+    await store.set(P.DOC, this.prog).catch((e) => console.warn(e));
+    this.channel?.postMessage({ type: 'progress-doc', from: TAB });
+    this.dispatchEvent(new Event('practice'));
+  }
+
+  /** Count an activity toward today (kind: drill | study | review | game | insight). */
+  async log(kind, id = null) {
+    await this.ready;
+    const latest = (await store.get(P.DOC).catch(() => null)) || {};
+    this.prog = P.mergeProgress(latest, this.prog);
+    if (P.logActivity(this.prog, kind, { id })) await this.#saveProgress();
+  }
+
+  /** A drill of a library line finished; clean = no mistakes. */
+  async reviewLine(side, san, clean) {
+    P.reviewLine(this.prog, P.lineKey(side, san), clean);
+    await this.#saveProgress();
+  }
+
+  due() { return P.dueLines(this.prog, this.lib); }
 
   // ───── games ─────
   async loadGames() {
@@ -65,6 +94,11 @@ class CoachService extends EventTarget {
     const { api } = await import('./store.js');
     const r = await api(`/api/games?user=${encodeURIComponent(this.user)}`);
     this.games = prepGames(r.games, this.user);
+    const u = this.user.toLowerCase();
+    this.reviewIdx = (await store.get(`rvidx-${u}`).catch(() => null)) || {};
+    this.an = (await store.get(`an-${u}`).catch(() => null)) || {};
+    this.#emit();
+    this.kick();
     return this.games;
   }
 
@@ -80,9 +114,13 @@ class CoachService extends EventTarget {
       await api(`/api/month?user=${encodeURIComponent(user)}&ym=${ym}`);
       onStep?.(++i, ar.todo.length);
     }
+    const before = new Set(this.games.map((g) => g.id));
     await this.loadGames();
+    ls.set('sfet.lastSync', Date.now());
     const added = await this.ingest(this.games);
-    return { games: this.games.length, months: ar.todo.length, discoveries: added };
+    const fresh = before.size ? this.games.filter((g) => !before.has(g.id)).length : 0;
+    this.dispatchEvent(new CustomEvent('synced', { detail: { fresh, discoveries: added } }));
+    return { games: this.games.length, months: ar.todo.length, discoveries: added, fresh };
   }
 
   // ───── discoveries ─────
@@ -143,6 +181,7 @@ class CoachService extends EventTarget {
       await store.set('custom', this.custom);
     }
     it.studied = { at: Date.now(), move: chosenSan, line: san };
+    this.log('study', id);
     await this.save();
     this.channel?.postMessage({ type: 'custom', from: TAB });
     this.#emit();
@@ -181,6 +220,11 @@ class CoachService extends EventTarget {
 
   async #onMessage(m) {
     if (!m || m.from === TAB) return;
+    if (m.type === 'progress-doc') {
+      this.prog = P.mergeProgress(this.prog, (await store.get(P.DOC).catch(() => null)) || {});
+      this.dispatchEvent(new Event('practice'));
+      return;
+    }
     if (m.type === 'doc' || m.type === 'custom') {
       if (m.type === 'custom') {
         this.custom = (await store.get('custom').catch(() => null)) || [];
@@ -192,7 +236,19 @@ class CoachService extends EventTarget {
       this.#emit();
       this.kick();
     }
-    if (m.type === 'progress') { this.progress = m.progress; this.dispatchEvent(new Event('progress')); }
+    if (m.type === 'progress') {
+      this.progress = m.progress;
+      if (m.progress?.kind === 'review' && m.progress.i === m.progress.n) setTimeout(() => this.#refreshReviews(), 600);
+      this.dispatchEvent(new Event('progress'));
+    }
+  }
+
+  async #refreshReviews() {
+    if (!this.user) return;
+    const u = this.user.toLowerCase();
+    this.reviewIdx = { ...this.reviewIdx, ...((await store.get(`rvidx-${u}`).catch(() => null)) || {}) };
+    this.an = { ...this.an, ...((await store.get(`an-${u}`).catch(() => null)) || {}) };
+    this.dispatchEvent(new CustomEvent('reviewed', { detail: {} }));
   }
 
   // ───── background analysis ─────
@@ -210,7 +266,41 @@ class CoachService extends EventTarget {
   }
 
   #next() {
-    return this.list().find((s) => s.status === 'new' && !s.analysis?.over);
+    const d = this.list().find((s) => s.status === 'new' && !s.analysis?.over);
+    if (d) return { kind: 'disc', s: d };
+    if (this.reviewsOff) return null;
+    const legacy = this.games.find((x) => this.reviewIdx[x.id] && !this.reviewIdx[x.id].s && !this.legacyDone?.has(x.id));
+    if (legacy) return { kind: 'legacy', x: legacy };
+    for (let i = this.games.length - 1; i >= 0; i--) {
+      const x = this.games[i];
+      if (x.sans.length >= 2 && !this.reviewIdx[x.id]) return { kind: 'review', x };
+    }
+    return null;
+  }
+
+  /** Background review progress: {done, total}. */
+  reviewProgress() {
+    const total = this.games.filter((x) => x.sans.length >= 2).length;
+    return { done: this.games.filter((x) => this.reviewIdx[x.id]).length, total };
+  }
+
+  /** Store a finished review (also used when the Review screen computes one itself). */
+  async saveReview(x, R) {
+    await store.set(reviewDocName(x.id), R);
+    this.reviewIdx[x.id] = reviewSummary(R);
+    const ins = insightFromReview(x, R);
+    if (!this.an[x.id] || (this.an[x.id].d || 0) <= ins.d) this.an[x.id] = ins;
+    const u = this.user.toLowerCase();
+    const now = Date.now();
+    if (!this.lastIdxSave || now - this.lastIdxSave > 4000) {
+      this.lastIdxSave = now;
+      await store.set(`rvidx-${u}`, this.reviewIdx);
+      await store.set(`an-${u}`, this.an);
+    } else {
+      clearTimeout(this.idxTimer);
+      this.idxTimer = setTimeout(() => { this.lastIdxSave = Date.now(); store.set(`rvidx-${u}`, this.reviewIdx); store.set(`an-${u}`, this.an); }, 4200);
+    }
+    this.dispatchEvent(new CustomEvent('reviewed', { detail: { id: x.id } }));
   }
 
   /** Start (or nudge) the background analyser. Safe to call often. */
@@ -225,10 +315,39 @@ class CoachService extends EventTarget {
     if (!this.queue) this.queue = new EngineQueue(new Engine(ENGINE_URL));
     const renew = setInterval(() => this.#lease(), LEASE_MS / 3);
     try {
-      for (let s = this.#next(); s && !this.paused; s = this.#next()) {
+      for (let job = this.#next(); job && !this.paused; job = this.#next()) {
+        if (job.kind === 'legacy') {
+          (this.legacyDone ||= new Set()).add(job.x.id);
+          const R = await store.get(reviewDocName(job.x.id)).catch(() => null);
+          if (R?.ev) await this.saveReview(job.x, R); else delete this.reviewIdx[job.x.id];
+          continue;
+        }
+        if (job.kind === 'review') {
+          const { x } = job;
+          let i = 0;
+          const n = x.sans.length + 1;
+          const R = await reviewGame(this.queue, x.sans, {
+            depth: this.depth.review,
+            bookPlies: bookPlies(x, this.lib.walk(x.col, x.sans).ply),
+            isCancelled: () => this.paused,
+            tick: () => {
+              i++;
+              if (i % 4 && i !== n) return;
+              this.progress = { kind: 'review', id: x.id, i, n, label: `${x.opp} (${x.col === 'w' ? 'White' : 'Black'})` };
+              this.dispatchEvent(new Event('progress'));
+              this.channel?.postMessage({ type: 'progress', from: TAB, progress: this.progress });
+            },
+          });
+          if (!R) break;
+          await this.saveReview(x, R);
+          this.progress = null;
+          this.dispatchEvent(new Event('progress'));
+          continue;
+        }
+        const { s } = job;
         const item = this.doc.items[s.id];
         const report = (p) => {
-          this.progress = { id: s.id, ...p };
+          this.progress = { kind: 'disc', id: s.id, ...p };
           this.dispatchEvent(new Event('progress'));
           this.channel?.postMessage({ type: 'progress', from: TAB, progress: this.progress });
         };
@@ -247,6 +366,26 @@ class CoachService extends EventTarget {
       this.progress = null;
       this.#release();
     }
+  }
+
+  /** Re-sync chess.com games every `minutes` (0 = off) while a page is open. */
+  autoSyncMinutes() { return Number(ls.get('sfet.autoSync', 60)); }
+
+  setAutoSync(minutes) { ls.set('sfet.autoSync', minutes); }
+
+  startAutoSync() {
+    clearInterval(this.autoTimer);
+    const tick = async () => {
+      const m = this.autoSyncMinutes();
+      if (!m || !this.user || this.syncing) return;
+      const last = Number(ls.get('sfet.lastSync', 0));
+      if (Date.now() - last < m * 60000) return;
+      ls.set('sfet.lastSync', Date.now()); // claim it so other tabs don't sync too
+      this.syncing = true;
+      try { await this.sync(this.user); } catch (e) { console.warn('auto sync failed', e); } finally { this.syncing = false; }
+    };
+    this.autoTimer = setInterval(tick, 60000);
+    setTimeout(tick, 4000);
   }
 
   pause(on = true) {

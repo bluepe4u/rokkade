@@ -19,6 +19,9 @@ const T = {
   busy: false,
   tk: 0,
   open: {},
+  target: null, // SAN list of the line being drilled (due-line sessions)
+  queue: [], // due lines still to drill in this session
+  session: null, // {total, clean}
 };
 let done = ls.get('rep-done', {});
 let board = null;
@@ -95,7 +98,7 @@ function restart() {
 
 async function drillStep() {
   const o = C.lib.book(T.side, T.path.at(-1));
-  if (!o.length) { finish(); return; }
+  if (!o.length || (T.target && T.mv.length >= T.target.length)) { finish(); return; }
   if (mine()) { T.msg = 'Your move'; T.cls = ''; draw(); return; }
   T.busy = true;
   T.msg = '';
@@ -103,9 +106,11 @@ async function drillStep() {
   const tk = ++T.tk;
   await sleep(480);
   if (tk !== T.tk || T.mode !== 'drill') return;
+  const want = T.target?.[T.mv.length];
+  const onTarget = want && o.find((e) => e.s === want);
   const openE = o.filter((e) => db().n[e.n].p.some((i) => !db().l[i].w && !done[T.side + i]));
   const pool = openE.length ? openE : o;
-  const e = pool[Math.floor(Math.random() * pool.length)];
+  const e = onTarget || pool[Math.floor(Math.random() * pool.length)];
   T.mv.push(e);
   T.path.push(e.n);
   T.busy = false;
@@ -118,10 +123,48 @@ function finish() {
     for (const id of T.path) for (const i of db().n[id].t) if (!db().l[i].w) done[T.side + i] = 1;
     ls.set('rep-done', done);
   }
-  T.msg = clean ? 'Line complete with no mistakes' : `Line complete with ${T.miss} ${T.miss > 1 ? 'mistakes' : 'mistake'}`;
+  // Spaced repetition: every line that ends where this drill ended gets its next review date.
+  const reached = T.mv.map((e) => e.s);
+  const ended = db().n[T.path.at(-1)].t.map((i) => db().l[i]).filter((l) => !l.w && l.san.join(' ') === reached.join(' '));
+  const lines = ended.length ? ended : T.target ? [{ san: T.target }] : [];
+  for (const l of lines) C.reviewLine(T.side, l.san, clean);
+  C.log('drill', `${T.side}|${reached.join(' ')}`);
+  if (T.session) { T.session.done++; if (clean) T.session.clean++; }
+  T.msg = clean ? (lines.length ? `Clean. Next review in ${C.prog.srs[`${T.side}|${lines[0].san.join(' ')}`]?.iv ?? 1} days` : 'Line complete with no mistakes') : `${T.miss} ${T.miss > 1 ? 'mistakes' : 'mistake'}: this line comes back tomorrow`;
   T.cls = clean ? 'ok' : '';
   draw();
   browse();
+  if (T.session) setTimeout(() => nextDue(), 1400);
+}
+
+/** Start (or continue) a session over the lines due today. */
+function nextDue() {
+  if (!root?.isConnected) return;
+  const next = T.queue.shift();
+  if (!next) {
+    const s = T.session;
+    T.session = null;
+    T.target = null;
+    T.msg = s ? `Session done: ${s.clean} of ${s.done} clean. Come back tomorrow for the next ones.` : '';
+    T.cls = 'ok';
+    renderInto();
+    return;
+  }
+  if (next.side !== T.side) { T.side = next.side; ls.set('rep-side', T.side); }
+  reset();
+  T.flip = false;
+  T.target = next.line.san;
+  openPath(next.line.san.slice(0, Math.min(next.line.st, next.line.san.length - 1)));
+  T.mode = 'drill';
+  T.dstart = T.mv.length;
+  T.miss = 0;
+  renderInto();
+}
+
+function startDue() {
+  T.queue = C.due();
+  T.session = { total: T.queue.length, done: 0, clean: 0 };
+  nextDue();
 }
 
 function hint() {
@@ -268,7 +311,8 @@ function renderInto() {
   const st = C.lib.stats(T.side);
   root.innerHTML = `<div class="row"><div><span class="eyebrow">Library</span><h1 class="h1">Your openings</h1></div><span class="spacer"></span>
       <div class="seg" id="tSide"><button data-v="w" aria-pressed="${T.side === 'w'}">I play White</button><button data-v="b" aria-pressed="${T.side === 'b'}">I play Black</button></div></div>
-    <p class="lede">${st.lines} lines${st.custom ? `, ${st.custom} added from your games` : ''}. Explore the tree move by move, or switch to Drill and play your moves from memory.</p>
+    <p class="lede">${st.lines} lines${st.custom ? `, ${st.custom} added from your games` : ''}. Explore the tree move by move, or drill it: lines come back on a schedule (1, 3, 7, 16 … days) so they stay learned.</p>
+    ${dueBanner()}
     <div class="trainer">
       <div class="trainer-board"><div id="tBoard"></div>
         <div class="board-ctl"><button class="btn icon" id="c0" title="Back to start"></button><button class="btn icon" id="c1" title="Back (←)">◀</button><button class="btn icon" id="c2" title="Forward (→)">▶</button><button class="btn" id="c3"></button></div></div>
@@ -282,6 +326,10 @@ function renderInto() {
     </div>
     <div id="tBrowse"></div>`;
   board = new AnimBoard($('#tBoard'), { orientation: T.side });
+  const db_ = $('#dueGo');
+  if (db_) db_.onclick = startDue;
+  const ds = $('#dueStop');
+  if (ds) ds.onclick = () => { T.queue = []; T.session = null; T.target = null; reset(); renderInto(); };
   $('#tSide').onclick = (e) => { const v = e.target.dataset.v; if (!v || v === T.side) return; T.side = v; ls.set('rep-side', v); reset(); T.flip = false; renderInto(); };
   $('#tMode').onclick = (e) => { const v = e.target.dataset.v; if (v) setMode(v); };
   $('#c0').onclick = () => (T.mode === 'drill' ? restart() : toStart());
@@ -299,10 +347,23 @@ addEventListener('keydown', (e) => {
   if (e.key === 'ArrowRight') forward();
 });
 
-/** args: [side, "e4,e5,...", "drill"] */
+function dueBanner() {
+  if (T.session) {
+    const s = T.session;
+    return `<div class="due-banner rise"><div class="due-prog"><i style="width:${(100 * s.done) / Math.max(1, s.total)}%"></i></div><span><b>Drill session</b> · line ${Math.min(s.done + 1, s.total)} of ${s.total}${T.target ? ` · ${esc(sanLine(T.target.slice(-3), T.target.length - 3))}` : ''}</span><button class="btn sm ghost" id="dueStop">End session</button></div>`;
+  }
+  const due = C.due();
+  const old = due.filter((d) => !d.isNew).length;
+  const fresh = due.length - old;
+  if (!due.length) return `<div class="due-banner done rise"><span class="due-ic">✓</span><span><b>All caught up.</b> No lines are due today.</span></div>`;
+  return `<div class="due-banner rise"><span class="due-ic">${due.length}</span><span><b>${due.length} ${due.length === 1 ? 'line' : 'lines'} to drill today</b> · ${[old ? `${old} due for review` : '', fresh ? `${fresh} new` : ''].filter(Boolean).join(' · ')}</span><button class="btn cta sm" id="dueGo">Start drilling <span class="arrow">→</span></button></div>`;
+}
+
+/** args: [side, "e4,e5,...", "drill"] or ["due"] */
 export function renderLibrary(view, coach, args = []) {
   C = coach;
   root = view;
+  if (args[0] === 'due') { renderInto(); startDue(); return; }
   if (args[0] === 'w' || args[0] === 'b') {
     T.side = args[0];
     ls.set('rep-side', T.side);

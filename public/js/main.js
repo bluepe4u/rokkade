@@ -231,7 +231,7 @@ function updateCoach() {
   coachLink.update({
     startFen, sans: history.slice(0, cursor).map((h) => h.san), ctrl: settings.ctrl, over, result, serial: gameSerial, elo: settings.elo,
   });
-  if (over && cursor === history.length) coachLink.gameOver(); else coachLink.playing();
+  if (over && cursor === history.length) coachLink.gameOver(gameSerial, history.length > 4 && (settings.ctrl.w === 'human' || settings.ctrl.b === 'human')); else coachLink.playing();
 }
 
 // ─────────────────────────── analysis ───────────────────────────
@@ -758,14 +758,6 @@ async function copy(text, msg) {
   toast(msg);
 }
 
-$('themeBtn').onclick = () => {
-  const root = document.documentElement;
-  const dark = root.dataset.theme
-    ? root.dataset.theme === 'dark'
-    : matchMedia('(prefers-color-scheme: dark)').matches;
-  root.dataset.theme = dark ? 'light' : 'dark';
-  try { localStorage.setItem('sfet.theme', root.dataset.theme); } catch {}
-};
 
 document.addEventListener('keydown', (e) => {
   if (e.target.matches('input, textarea') && e.target.type !== 'checkbox') {

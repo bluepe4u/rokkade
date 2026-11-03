@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Coach · Stockfish Elo Terminal</title>
-  <meta name="description" content="Your opening library, your chess.com games, and the new positions opponents show you, analysed and turned into lessons." />
+  <title>Outpost</title>
+  <meta name="description" content="Outpost: get better at chess a little every day. A daily session, your opening library, your games reviewed, and lessons from the moves that surprise you." />
   <link rel="icon" href="pieces/wN.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -16,32 +16,17 @@
   </script>
 </head>
 <body class="coach-page">
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark"><img src="pieces/wN.svg" alt="" /></span>
-      <span class="brand-name">STOCKFISH <em>ELO</em> TERMINAL</span>
-    </div>
-    <nav class="mode-tabs" aria-label="App">
-      <a href="./">Play</a>
-      <a href="coach.html" aria-current="page">Coach <span class="tab-badge" data-badge hidden></span></a>
-      <a href="four.html">4-Player</a>
-    </nav>
-    <div class="topbar-status" id="bgStatus" aria-live="polite"></div>
-    <div class="topbar-actions">
-      <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
-      </button>
-    </div>
+  <header class="topbar" data-shell="coach">
+    <div class="topbar-status" id="bgStatus" data-keep aria-live="polite"></div>
   </header>
 
   <div class="subnav-wrap">
-    <nav class="subnav" id="subnav" aria-label="Coach sections">
-      <a href="#discoveries" data-sec="discoveries">Discoveries <span class="tab-badge" data-badge hidden></span></a>
-      <a href="#library" data-sec="library">Library</a>
-      <a href="#games" data-sec="games">Games</a>
-      <a href="#review" data-sec="review">Review</a>
-      <a href="#insights" data-sec="insights">Insights</a>
-      <a href="#guide" data-sec="guide">Guide</a>
+    <nav class="subnav" id="subnav" aria-label="Section" hidden>
+      <a href="#discoveries" data-sec="discoveries" data-group="study">Discoveries <span class="tab-badge" data-badge hidden></span></a>
+      <a href="#library" data-sec="library" data-group="study">Library <span class="tab-badge due-badge" id="dueBadge" hidden></span></a>
+      <a href="#games" data-sec="games" data-group="analyse">Games</a>
+      <a href="#review" data-sec="review" data-group="analyse">Review</a>
+      <a href="#insights" data-sec="insights" data-group="analyse">Insights</a>
       <span class="subnav-ink" aria-hidden="true"></span>
     </nav>
     <div class="account" id="account"></div>
@@ -51,6 +36,7 @@
 
   <div class="story" id="story" role="dialog" aria-modal="true" aria-label="Study a discovery" hidden></div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="js/shell.js"></script>
   <script type="module" src="js/coach/page.js"></script>
 </body>
 </html>

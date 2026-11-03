@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title Stockfish Elo Terminal
+title Outpost
 where node >nul 2>nul
 if %errorlevel%==0 (
   node server.js %*

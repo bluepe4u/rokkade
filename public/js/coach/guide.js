@@ -176,10 +176,10 @@ export function buildGuide(ctx) {
 
   // ── header
   if (!p.n) {
-    h.push(`<span class="eyebrow">Guide</span><h1>Your game plan</h1><p class="lede">This guide is built from your own games. Import them in <a class="link" href="#games">Games</a> and it will show your strengths, what to fix first, a training plan and the patterns worth learning. Until then, here is a general plan.</p>`);
+    h.push(`<span class="eyebrow">Plan</span><h1>Your game plan</h1><p class="lede">This plan is built from your own games. Import them in <a class="link" href="#games">Games</a> and it will show your strengths, what to fix first, a training plan and the patterns worth learning. Until then, here is a general plan.</p>`);
   } else {
     const b = p.band;
-    h.push(`<span class="eyebrow">Guide${user ? ` · ${user}` : ''}</span><h1>Your game plan</h1>
+    h.push(`<span class="eyebrow">Plan${user ? ` · ${user}` : ''}</span><h1>Your game plan</h1>
       <p class="lede">Built from ${plural(p.n, 'game')}${p.ES ? ` (${p.ES.g} analysed by the engine)` : ''}, ${new Date(p.first * 1000).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })} to ${new Date(p.last * 1000).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}. It updates as you import, analyse and study.</p>
       <div class="tiles">
         <div class="tile rise"><b data-count="${p.rating}">${p.rating}</b><span>${esc(TC_NAME[p.main.tc] || p.main.tc)} rating${p.main.change != null ? ` · ${p.main.change >= 0 ? '+' : '−'}${Math.abs(p.main.change)} in 90 days` : ''}</span></div>
@@ -275,6 +275,6 @@ export function buildGuide(ctx) {
     <li><b>Review:</b> find your own mistakes first, then check them in <a class="link" href="#review">Review</a>. Note the first serious error of each game.</li>
     <li><b>Openings:</b> study what's waiting in <a class="link" href="#discoveries">Discoveries</a>, then drill the new lines in <a class="link" href="#library">Library</a>.</li></ul>`)}`);
 
-  if (p.n && !p.ES) h.push(`<p class="note">Analyse your games in <a class="link" href="#insights">Insights</a> to make this guide sharper: it then knows where your blunders happen and what you miss.</p>`);
+  if (p.n && !p.ES) h.push(`<p class="note">Analyse your games in <a class="link" href="#insights">Insights</a> to make this plan sharper: it then knows where your blunders happen and what you miss.</p>`);
   return { html: h.join('\n'), profile: p, priorities: prio, plan };
 }

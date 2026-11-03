@@ -1,4 +1,3 @@
-import { bindBadge } from '../coach/service.js';
 import {
   newGame, legalMoves, playMove, serialize, deserialize, sq, xOf, yOf, isValidSquare, inCheck,
   pieceType, pieceOwner, moveFrom, moveTo, moveFlags, promotionPiece, describeResult,
@@ -720,12 +719,6 @@ function stepBot() {
 }
 el.nudge.onclick = stepBot;
 
-$('themeBtn').onclick = () => {
-  const root = document.documentElement;
-  const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
-  root.dataset.theme = dark ? 'light' : 'dark';
-  try { localStorage.setItem('sfet.theme', root.dataset.theme); } catch {}
-};
 
 document.addEventListener('keydown', (e) => {
   if (e.target.matches('input, textarea, select') || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -767,4 +760,3 @@ loadPieceImages().then(() => {
   toast('Could not load the piece images. Open the page through start.bat / node server.js.');
 });
 
-document.querySelectorAll('[data-badge]').forEach(bindBadge);
