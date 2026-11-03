@@ -69,7 +69,7 @@ export async function renderReview(view, C, S, args = [], { quiet = false } = {}
   const rp = C.reviewProgress();
   const q = RV.q.trim().toLowerCase();
   const L = filterGames(C.games, S.f).filter((x) => !q || `${x.opp} ${x.fam} ${x.name}`.toLowerCase().includes(q)).slice().reverse();
-  const mine = C.games.filter((x) => idx[x.id]).slice(-20).map((x) => C.calAcc(idx[x.id][x.col]));
+  const mine = C.games.filter((x) => idx[x.id]).slice(-20).map((x) => C.accOf(x.id, x.col));
   const avg = mine.length ? mine.reduce((a, b) => a + b, 0) / mine.length : null;
   const p = C.progress?.kind === 'review' ? C.progress : null;
   const groups = [];
@@ -95,7 +95,7 @@ export async function renderReview(view, C, S, args = [], { quiet = false } = {}
         <span class="gr-main"><b>${esc(x.opp)} <small class="rt">${x.opR}</small></b><small><i class="side-dot ${x.col}"></i>${esc(x.fam)} · ${esc(x.tc)} · ${when(x.t)}</small></span>
         <span class="gr-spark">${r ? sparkSVG(r.s, x.col) : ''}</span>
         <span class="gr-err">${r ? `${mc.blunder ? `<span class="cnt" style="--c:var(--cl-blunder)">${mc.blunder}??</span>` : ''}${mc.mistake ? `<span class="cnt" style="--c:var(--cl-mistake)">${mc.mistake}?</span>` : ''}${(mc.brilliant || 0) + (mc.great || 0) ? `<span class="cnt" style="--c:var(--cl-great)">${(mc.brilliant || 0) + (mc.great || 0)}!</span>` : ''}` : ''}</span>
-        <span class="gr-acc">${r ? `<span class="acc-pill" style="--c:${accColor(C.calAcc(r[x.col]))}">${C.calAcc(r[x.col])}</span>` : now ? `<span class="queued"><span class="ring spin sm"></span>${Math.round((100 * p.i) / p.n)}%</span>` : '<span class="queued">In queue</span>'}</span>
+        <span class="gr-acc">${r ? `<span class="acc-pill" style="--c:${accColor(C.accOf(x.id, x.col))}">${C.accOf(x.id, x.col)}</span>` : now ? `<span class="queued"><span class="ring spin sm"></span>${Math.round((100 * p.i) / p.n)}%</span>` : '<span class="queued">In queue</span>'}</span>
       </button>`;
     }).join('')}</div>`).join('') || '<p class="note">No games match.</p>'}
     ${L.length > RV.show ? `<button class="btn" id="more" style="margin-top:12px;width:100%">Show more (${L.length - RV.show} left)</button>` : ''}`;
@@ -216,7 +216,7 @@ function drawGame() {
   const how = RESULT_TEXT[(x.sc === 1 ? opP : meP)?.result] || '';
   const cc = g.accuracies;
   const ccOf = (c) => cc?.[c === 'w' ? 'white' : 'black'];
-  const acc = (c) => RV.C.calAcc ? RV.C.calAcc(R.acc[c]) : R.acc[c];
+  const acc = (c) => RV.C.accFromLosses(R.loss, c);
   const ph = { me: phaseAccuracy(R, x.col), op: phaseAccuracy(R, opp) };
   const cnt = { w: {}, b: {} };
   R.cl.forEach((c, i) => { const sd = i % 2 ? 'b' : 'w'; cnt[sd][c] = (cnt[sd][c] || 0) + 1; });
@@ -261,7 +261,7 @@ function drawGame() {
             const mx = Math.max(1, ...Object.values(cnt.w), ...Object.values(cnt.b));
             return `<div class="mr" title="${esc(HELP[k])}"><span class="mr-v">${a}</span><span class="mr-l"><i data-w="${(100 * a) / mx}" style="background:${CLASSES[k].color}"></i></span><span class="mr-k">${chip(k)}${CLASSES[k].label}</span><span class="mr-r"><i data-w="${(100 * b) / mx}" style="background:${CLASSES[k].color}"></i></span><span class="mr-v">${b}</span></div>`;
           }).join('')}</div><div class="legend" style="margin-top:8px;justify-content:space-between"><span>You</span><span>Opponent</span></div></div>
-          <p class="note">Accuracy and labels use Outpost's own formula${RV.C.cal ? `, calibrated to chess.com on ${RV.C.cal.n} of your results` : ''}. Reviewed at depth ${R.d}.</p>
+          <p class="note">Accuracy uses Outpost's formula${RV.C.accParams?.games ? `, fitted to chess.com's on ${RV.C.accParams.games} public games` : ''}${RV.C.cal ? ` and adjusted on ${RV.C.cal.n} of your own results` : ''}. Reviewed at depth ${R.d}.</p>
         </div>
       </div>
     </div>`;

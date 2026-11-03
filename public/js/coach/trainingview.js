@@ -36,7 +36,7 @@ export function renderTraining(view, C, args = []) {
     <h2 class="h2">Endgames to master</h2>
     <div class="eg-grid">${egs.map((e) => {
       const s = srsState(C, `eg|${e.id}`);
-      return `<a class="eg rise" href="#training/eg/${e.id}">${miniBoard(e.fen, e.fen.split(' ')[1])}<span class="eg-body"><span class="chipk ${e.goal === 'draw' ? 'punish' : 'blunder'}">${GOAL_TEXT[e.goal]}</span><b>${esc(e.title)}</b><small>${'●'.repeat(e.level)}${'○'.repeat(3 - e.level)} · ${e.fen.split(' ')[1] === 'w' ? 'White' : 'Black'}</small><span class="pz-st ${s.k}">${s.t}</span></span></a>`;
+      return `<a class="eg rise" href="#training/eg/${e.id}">${miniBoard(e.fen, e.fen.split(' ')[1])}<span class="eg-body"><span class="chipk ${e.goal === 'draw' ? 'punish' : 'blunder'}">${GOAL_TEXT[e.goal]}</span><b>${esc(e.title)}</b><small class="eg-meta"><span class="lvl" title="Difficulty" aria-label="Difficulty ${e.level} of 3">${[1, 2, 3].map((k) => `<i class="${k <= e.level ? 'on' : ''}"></i>`).join('')}</span>${['Easy', 'Medium', 'Hard'][e.level - 1]} · ${e.fen.split(' ')[1] === 'w' ? 'White' : 'Black'}</small><span class="pz-st ${s.k}">${s.t}</span></span></a>`;
     }).join('')}</div>`;
   stagger(view, 30);
 }

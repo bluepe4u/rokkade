@@ -7,7 +7,7 @@ import { store, ls } from './store.js';
 import { prepGames } from './games.js';
 import * as P from './progress.js';
 import { buildPuzzles } from './puzzles.js';
-import { calibrationPairs, fitCalibration, applyCalibration } from './calibration.js';
+import { fitCalibration, applyCalibration, paramAccuracy, DEFAULT_PARAMS } from './calibration.js';
 import { Chess } from '../../vendor/chess.js';
 import { DOC, DEPTH, catchDiscoveries, mergeDocs, mergeItem, summarize, analyseDiscovery, statusOf, studiedLine } from './discoveries.js';
 
@@ -62,6 +62,11 @@ class CoachService extends EventTarget {
     this.lib.applyCustom(this.custom);
     this.doc = mergeDocs({ items: {} }, (await store.get(DOC).catch(() => null)) || {});
     this.prog = P.mergeProgress(P.emptyProgress(), (await store.get(P.DOC).catch(() => null)) || {});
+    // Accuracy formula fitted on public chess.com games (tools/calibrate-accuracy.mjs).
+    try {
+      const r = await fetch(new URL('../../models/accuracy-calibration.json', import.meta.url), { cache: 'no-cache' });
+      if (r.ok) { const j = await r.json(); if (typeof j.k === 'number') this.accParams = j; }
+    } catch { /* fall back to the default formula */ }
     this.#publishBadge();
     return this;
   }
@@ -368,14 +373,39 @@ class CoachService extends EventTarget {
     return { kind: 'review', x: deep[0], deep: true };
   }
 
-  /** Accuracy calibrated to chess.com (identity until enough games have both numbers). */
+  /** Accuracy before your personal adjustment: the publicly fitted formula on per-move losses. */
+  baseAcc(id, side) {
+    const r = this.reviewIdx[id];
+    if (!r) return null;
+    return r.l ? paramAccuracy(r.l, side, this.accParams || DEFAULT_PARAMS) : r[side];
+  }
+
+  /** Your personal adjustment toward chess.com's numbers, once enough of your games have both. */
   get cal() {
     const n = Object.keys(this.reviewIdx).length;
-    if (this.calCache?.n !== n || this.calCache.g !== this.games.length) this.calCache = { n, g: this.games.length, cal: fitCalibration(calibrationPairs(this.games, this.reviewIdx)) };
+    if (this.calCache?.n !== n || this.calCache.g !== this.games.length) {
+      const pairs = [];
+      for (const x of this.games) {
+        const cc = x.g?.accuracies;
+        if (!cc || !this.reviewIdx[x.id]) continue;
+        if (typeof cc.white === 'number') pairs.push({ raw: this.baseAcc(x.id, 'w'), ref: cc.white });
+        if (typeof cc.black === 'number') pairs.push({ raw: this.baseAcc(x.id, 'b'), ref: cc.black });
+      }
+      // A personal fit only adds to the public one when it clearly helps.
+      let cal = fitCalibration(pairs);
+      if (cal && cal.maeRaw - cal.maeFit < 1) cal = null;
+      this.calCache = { n, g: this.games.length, cal, pairs: pairs.length };
+    }
     return this.calCache.cal;
   }
 
   calAcc(raw) { return applyCalibration(raw, this.cal); }
+
+  /** Accuracy shown for a reviewed game and side. */
+  accOf(id, side) { const b = this.baseAcc(id, side); return b == null ? null : this.calAcc(b); }
+
+  /** Accuracy from a full review's per-ply losses. */
+  accFromLosses(loss, side) { return this.calAcc(paramAccuracy(loss, side, this.accParams || DEFAULT_PARAMS)); }
 
   /** Background review progress: {done, total, deep}. */
   reviewProgress() {

@@ -74,7 +74,7 @@ export function renderToday(view, C, S, { quiet = false } = {}) {
   });
   steps.push({
     key: 'review', title: latest ? `Review your game against ${esc(latest.opp)}` : 'Review a game',
-    sub: latest ? `${latest.sc === 1 ? 'Won' : latest.sc === 0.5 ? 'Drawn' : 'Lost'} · ${esc(latest.fam)}${C.reviewIdx[latest.id] ? ` · your accuracy ${C.calAcc(C.reviewIdx[latest.id][latest.col])}%` : ''}. Find your first mistake before you look.` : 'Import your chess.com games in Analyse → Games, or play one here.',
+    sub: latest ? `${latest.sc === 1 ? 'Won' : latest.sc === 0.5 ? 'Drawn' : 'Lost'} · ${esc(latest.fam)}${C.reviewIdx[latest.id] ? ` · your accuracy ${C.accOf(latest.id, latest.col)}%` : ''}. Find your first mistake before you look.` : 'Import your chess.com games in Analyse → Games, or play one here.',
     done: !!d.review, href: latest ? `#review/${encodeURIComponent(latest.id)}` : '#games', cta: 'Review',
   });
   steps.push({
@@ -98,7 +98,7 @@ export function renderToday(view, C, S, { quiet = false } = {}) {
   // ── progress tiles
   const tc = p?.main?.tc;
   const ratings = tc ? C.games.filter((x) => x.tc === tc).slice(-40).map((x) => x.myR) : [];
-  const accs = C.games.filter((x) => C.reviewIdx[x.id]).slice(-30).map((x) => C.calAcc(C.reviewIdx[x.id][x.col]));
+  const accs = C.games.filter((x) => C.reviewIdx[x.id]).slice(-30).map((x) => C.accOf(x.id, x.col));
   const accRecent = accs.slice(-10);
   const accAvg = accRecent.length ? accRecent.reduce((a, b) => a + b, 0) / accRecent.length : null;
   const accPrev = accs.slice(-20, -10);
