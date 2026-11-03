@@ -3,6 +3,7 @@ import { Board } from './board.js';
 import { Engine } from './engine.js';
 import { Maia } from './maia.js';
 import { OpeningBook } from './book.js';
+import { attachPlay } from './coach/playlink.js';
 import {
   playerModel, searchBudget, blendMoves, sampleMove, eloBand, materialOutcome,
   describeOutcome, formatScore, scoreToCp, uciToMove, materialOf,
@@ -61,6 +62,8 @@ let autoTimer = null;
 let solveRequested = false;
 let hoverIdx = null;
 let renderQueued = false;
+let gameSerial = Date.now(); // identifies this game for the Coach
+let coachLink = null;
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -192,6 +195,7 @@ function goTo(i) {
 
 function newGame(fen = DEFAULT_POSITION) {
   startFen = fen;
+  gameSerial = Date.now();
   history = [];
   cursor = 0;
   game = new Chess(fen);
@@ -216,6 +220,18 @@ function positionChanged() {
   renderMoveList();
   renderStatus();
   startAnalysis();
+  updateCoach();
+}
+
+// Coach: library chip under the board; out-of-library replies are saved to Discoveries.
+function updateCoach() {
+  if (!coachLink) return;
+  const over = game.isGameOver();
+  const result = !over ? null : game.isCheckmate() ? (game.turn() === 'w' ? '0-1' : '1-0') : '1/2-1/2';
+  coachLink.update({
+    startFen, sans: history.slice(0, cursor).map((h) => h.san), ctrl: settings.ctrl, over, result, serial: gameSerial, elo: settings.elo,
+  });
+  if (over && cursor === history.length) coachLink.gameOver(); else coachLink.playing();
 }
 
 // ─────────────────────────── analysis ───────────────────────────
@@ -775,4 +791,10 @@ document.addEventListener('keydown', (e) => {
 // ─────────────────────────── boot ───────────────────────────
 board.setOrientation(settings.orientation);
 positionChanged();
+try {
+  coachLink = attachPlay({ chip: $('openingChip'), toast });
+  coachLink && setTimeout(updateCoach, 400);
+} catch (err) {
+  console.warn('Coach link unavailable', err);
+}
 bootEngine();

@@ -1,3 +1,4 @@
+import { bindBadge } from '../coach/service.js';
 import {
   newGame, legalMoves, playMove, serialize, deserialize, sq, xOf, yOf, isValidSquare, inCheck,
   pieceType, pieceOwner, moveFrom, moveTo, moveFlags, promotionPiece, describeResult,
@@ -765,3 +766,5 @@ loadPieceImages().then(() => {
   console.error(err);
   toast('Could not load the piece images. Open the page through start.bat / node server.js.');
 });
+
+document.querySelectorAll('[data-badge]').forEach(bindBadge);

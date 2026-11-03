@@ -68,7 +68,8 @@ Each discovery holds:
    MultiPV 4 at depth 20 (time-capped), then each of your replies that isn't in the top 4 at depth 18.
    Progress is shown on the card (ring + depth). Only one tab analyses at a time (a localStorage lease).
 3. **Study.** The story (below). Finishing it **adds the line to your library** (your chosen move plus the
-   engine's next moves) under *Studied from your games*, and marks the discovery studied.
+   engine's next moves) in the chapter it belongs to (or *Other lines from your games*), shows it on the Library's
+   *Added from your games* shelf, and marks the discovery studied.
 
 ### 3.3 Inbox (Discoveries section)
 ```
@@ -122,6 +123,8 @@ Board on the left (animated), narrative on the right, progress pills at the bott
   name. On the first opponent move outside the library: a toast, the chip turns to “New for you”, and the
   position is caught as a discovery (source *terminal*), analysed in the background like any other.
 - The badge on the Coach tab updates immediately.
+- While a game is in progress the background analyser is paused (the solver needs the CPU); it resumes when the
+  game ends, or in any open Coach tab.
 
 ## 5. Data and compatibility
 | Store document (`data/store/*.json`) | Content |
