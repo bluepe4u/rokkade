@@ -13,7 +13,7 @@ export const NAV = [
   { id: 'plan', label: 'Plan', sec: 'plan' },
   { id: 'four', label: '4-Player', href: 'four.html' },
 ];
-export const GROUP_OF = { today: 'today', discoveries: 'study', library: 'study', puzzles: 'study', training: 'study', progress: 'analyse', time: 'analyse', prepare: 'analyse', games: 'analyse', review: 'analyse', insights: 'analyse', plan: 'plan', guide: 'plan' };
+export const GROUP_OF = { today: 'today', discoveries: 'study', library: 'study', puzzles: 'study', training: 'study', progress: 'analyse', time: 'analyse', prepare: 'analyse', games: 'analyse', review: 'analyse', journal: 'analyse', insights: 'analyse', plan: 'plan', guide: 'plan' };
 
 const header = document.querySelector('header[data-shell]');
 const page = header?.dataset.shell;

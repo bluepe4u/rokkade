@@ -5,7 +5,7 @@
 
 export const DOC = 'progress';
 export const INTERVALS = [1, 3, 7, 16, 35, 75, 150];
-export const KINDS = ['drill', 'study', 'review', 'game', 'insight', 'puzzle', 'train'];
+export const KINDS = ['drill', 'study', 'review', 'game', 'insight', 'puzzle', 'train', 'journal'];
 export const NEW_PER_DAY = 2;
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -16,7 +16,7 @@ export const lineKey = (side, san) => `${side}|${san.join(' ')}`;
 /** Library-line keys start with the side; puzzles (pz|), endgames (eg|) and calculation (calc|) don't. */
 export const isLineKey = (k) => k.startsWith('w|') || k.startsWith('b|');
 
-export const emptyProgress = () => ({ v: 1, goal: 3, days: {}, srs: {}, goals: [], goalsAt: 0 });
+export const emptyProgress = () => ({ v: 1, goal: 3, days: {}, srs: {}, goals: [], goalsAt: 0, plans: [], plansAt: 0 });
 
 /** Record one activity for today (deduplicated by `id` within the day). Returns true if counted. */
 export function logActivity(doc, kind, { id = null, today = dayKey() } = {}) {
@@ -86,6 +86,9 @@ export function mergeProgress(a, b) {
   const g = (b?.goalsAt || 0) >= (a?.goalsAt || 0) ? b : a;
   out.goals = g?.goals || a?.goals || [];
   out.goalsAt = Math.max(a?.goalsAt || 0, b?.goalsAt || 0);
+  const pl = (b?.plansAt || 0) >= (a?.plansAt || 0) ? b : a;
+  out.plans = pl?.plans || a?.plans || [];
+  out.plansAt = Math.max(a?.plansAt || 0, b?.plansAt || 0);
   for (const src of [a, b]) {
     for (const [k, d] of Object.entries(src?.days || {})) {
       const o = (out.days[k] ||= {});

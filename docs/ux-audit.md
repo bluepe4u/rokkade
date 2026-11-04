@@ -54,3 +54,13 @@ Ordered by how much they'd help someone improve.
 10. **Accessibility.** Keyboard play on the board, screen-reader move announcements and a colour-blind-safe palette for move classes are not done yet.
 11. **Data portability.** No export or backup button for the `data/` folder, and no way to sync between two computers.
 12. **Notifications.** "3 lines due" and "new game reviewed" only show inside the app; a gentle optional browser notification once a day would support the daily habit.
+
+## Product direction: journal and plan accountability
+
+The import → engine review → training plan layer is crowded (Chess.com Insights, Aimchess, Chessy and others). The gap is the player's own reflection joined to engine data, and checking whether a plan actually moved a number. Done so far:
+
+- **Journal card** per game with the critical moment and auto-suggested tags (clock, review, losing streak), so an entry takes seconds.
+- **Tag statistics** that mix confirmed and detected tags, plus score after a loss/win from the games alone.
+- **Plans** with one measured number, daily tasks and an honest verdict (minimum sample, change must beat the noise).
+
+Next, in order: a weekly report (top 3 problems by tag with example positions), Lichess game import, merging the 13 sections around the loop (Today · Games+Journal · Train · Plan · Insights), and only then a hosted version with sync, which is what a paid tier needs (see the market analysis).

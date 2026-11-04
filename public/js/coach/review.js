@@ -235,7 +235,8 @@ function drawGame() {
   };
   view.innerHTML = `<div class="rv-top rise"><a class="link back" href="#review">← All games</a>
       <span class="rv-res ${x.sc === 1 ? 'win' : x.sc === 0.5 ? 'draw' : 'loss'}">${res}${how ? ` <small>${esc(how)}</small>` : ''}</span>
-      <span class="rv-meta">${esc(x.name)} · ${esc(x.tc)} · ${when(x.t)}${x.url ? ` · <a class="link" href="${esc(x.url)}" target="_blank" rel="noopener">chess.com ↗</a>` : ''}</span></div>
+      <span class="rv-meta">${esc(x.name)} · ${esc(x.tc)} · ${when(x.t)}${x.url ? ` · <a class="link" href="${esc(x.url)}" target="_blank" rel="noopener">chess.com ↗</a>` : ''}</span>
+      <a class="btn sm${RV.C.journal?.e?.[x.id] && !RV.C.journal.e[x.id].skip ? ' ghost' : ' cta'}" href="#journal/${encodeURIComponent(x.id)}" title="What were you thinking? Add it to your journal">${RV.C.journal?.e?.[x.id] && !RV.C.journal.e[x.id].skip ? '✓ Journaled' : '✎ Journal this game'}</a></div>
     <div class="rv2">
       <div class="rv2-board">
         <div id="pbTop"></div>

@@ -7,6 +7,7 @@ import { store, ls } from './store.js';
 import { prepGames } from './games.js';
 import * as P from './progress.js';
 import { buildPuzzles } from './puzzles.js';
+import { journalDoc, emptyJournal, mergeJournal } from './journal.js';
 import { fitCalibration, applyCalibration, paramAccuracy, DEFAULT_PARAMS } from './calibration.js';
 import { Chess } from '../../vendor/chess.js';
 import { DOC, DEPTH, catchDiscoveries, mergeDocs, mergeItem, summarize, analyseDiscovery, statusOf, studiedLine } from './discoveries.js';
@@ -45,6 +46,7 @@ class CoachService extends EventTarget {
     this.games = [];
     this.reviewIdx = {}; // game id → reviewSummary (accuracy, sparkline, class counts)
     this.an = {}; // game id → Insights record
+    this.journal = emptyJournal(); // game id → {note, tags, mood, at}
     this.depth = depthConfig();
     this.progress = null; // {id, stage, depth}
     this.channel = 'BroadcastChannel' in self ? new BroadcastChannel('sfet-coach') : null;
@@ -101,6 +103,26 @@ class CoachService extends EventTarget {
     const n = Object.keys(this.an).length * 1000 + this.games.length;
     if (this.pzCache?.n !== n) this.pzCache = { n, list: buildPuzzles(this.games, this.an) };
     return this.pzCache.list;
+  }
+
+  // ───── journal and plans ─────
+  /** Save the journal entry for a game (merged with what other tabs saved). */
+  async saveJournal(id, entry) {
+    const name = journalDoc(this.user);
+    const latest = (await store.get(name).catch(() => null)) || {};
+    const t = this.games.find((x) => x.id === id)?.t || null;
+    this.journal = mergeJournal(latest, this.journal);
+    this.journal.e[id] = { ...entry, t, at: Date.now() };
+    await store.set(name, this.journal).catch((e) => console.warn(e));
+    this.channel?.postMessage({ type: 'journal', from: TAB });
+    if (!entry.skip && P.logActivity(this.prog, 'journal', { id })) await this.#saveProgress();
+    this.dispatchEvent(new Event('journal'));
+  }
+
+  async setPlans(plans) {
+    this.prog.plans = plans;
+    this.prog.plansAt = Date.now();
+    await this.#saveProgress();
   }
 
   async setGoals(goals) {
@@ -186,6 +208,7 @@ class CoachService extends EventTarget {
     const u = this.user.toLowerCase();
     this.reviewIdx = (await store.get(`rvidx-${u}`).catch(() => null)) || {};
     this.an = (await store.get(`an-${u}`).catch(() => null)) || {};
+    this.journal = mergeJournal(emptyJournal(), (await store.get(journalDoc(u)).catch(() => null)) || {});
     this.#emit();
     this.kick();
     return this.games;
@@ -312,6 +335,11 @@ class CoachService extends EventTarget {
     if (m.type === 'progress-doc') {
       this.prog = P.mergeProgress(this.prog, (await store.get(P.DOC).catch(() => null)) || {});
       this.dispatchEvent(new Event('practice'));
+      return;
+    }
+    if (m.type === 'journal') {
+      this.journal = mergeJournal(this.journal, (await store.get(journalDoc(this.user)).catch(() => null)) || {});
+      this.dispatchEvent(new Event('journal'));
       return;
     }
     if (m.type === 'doc' || m.type === 'custom') {

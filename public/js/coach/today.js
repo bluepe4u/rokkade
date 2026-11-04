@@ -7,6 +7,8 @@ import { plural, pct } from './games.js';
 import { puzzleQueue, focusFor } from './puzzles.js';
 import { trackedFor } from './progressview.js';
 import { goalsHTML, bindGoals, weekHTML } from './goalsview.js';
+import { planCardHTML, bindPlanCard } from './journalview.js';
+import { journalInbox } from './journal.js';
 
 const WEEKS = 12;
 
@@ -77,6 +79,12 @@ export function renderToday(view, C, S, { quiet = false } = {}) {
     sub: latest ? `${latest.sc === 1 ? 'Won' : latest.sc === 0.5 ? 'Drawn' : 'Lost'} · ${esc(latest.fam)}${C.reviewIdx[latest.id] ? ` · your accuracy ${C.accOf(latest.id, latest.col)}%` : ''}. Find your first mistake before you look.` : 'Import your chess.com games in Analyse → Games, or play one here.',
     done: !!d.review, href: latest ? `#review/${encodeURIComponent(latest.id)}` : '#games', cta: 'Review',
   });
+  const jq = journalInbox(C.games, C.journal, { days: 3 });
+  if (jq.length || d.journal) steps.push({
+    key: 'journal', title: jq.length ? `Journal ${jq.length === 1 ? `your game against ${esc(jq[0].opp)}` : plural(jq.length, 'recent game')}` : 'Journal your games',
+    sub: jq.length ? 'Ten seconds a game: what you were thinking at the critical moment. The tags are already suggested.' : `${plural(d.journal, 'game')} journaled today.`,
+    done: !jq.length, href: '#journal', cta: 'Journal',
+  });
   steps.push({
     key: 'play', title: 'Play a serious game',
     sub: (gd.get(today) || d.game) ? `${plural((gd.get(today) || 0) + (d.game || 0), 'game')} today.` : 'A longer time control, using the four-question check on every move. Your library is followed as you play.',
@@ -126,6 +134,7 @@ export function renderToday(view, C, S, { quiet = false } = {}) {
       <span class="step-body"><b>${s.title}</b><small>${s.sub}</small></span>
       <a class="btn ${s.done ? 'ghost' : 'cta'} sm" href="${s.href}">${s.done ? 'Again' : s.cta} <span class="arrow">→</span></a></li>`).join('')}</ol>
 
+    ${planCardHTML(C, { compact: true })}
     <div class="today-grid">${goalsHTML(C)}${weekHTML(C)}</div>
     <div class="today-grid">
       <section class="panel-card rise">
@@ -143,6 +152,7 @@ export function renderToday(view, C, S, { quiet = false } = {}) {
     </div>
     ${!C.user ? `<section class="panel-card rise" style="margin-top:16px"><h2 class="h3">Connect your chess.com games</h2><p class="note">Outpost reviews every game in the background, finds the moves that surprise you, and builds your plan from them. <a class="link" href="#games">Import in Analyse → Games →</a></p></section>` : ''}`;
   bindGoals(view, C);
+  bindPlanCard(view, C);
   if (!quiet) { stagger(view, 55); countUp(view); }
   // goal ring fills after paint
   const r = $('.goal-ring', view);
