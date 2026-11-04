@@ -1,4 +1,4 @@
-// Outpost (coach.html): section router, account bar, Discoveries inbox, Games and Plan.
+// Rokade (coach.html): section router, account bar, Discoveries inbox, Games and Plan.
 import { coach } from './service.js';
 import { setActive, GROUP_OF } from '../shell.js';
 import { renderToday } from './today.js';
@@ -119,7 +119,7 @@ export async function route() {
     a.hidden = a.dataset.group !== group;
     if (a.dataset.sec === sec) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
-  document.title = `${{ today: 'Today', discoveries: 'Discoveries', library: 'Library', puzzles: 'Puzzles', training: 'Training', time: 'Time', prepare: 'Prepare', progress: 'Progress', games: 'Games', review: 'Review', journal: 'Journal', insights: 'Insights', plan: 'Plan' }[sec]} · Outpost`;
+  document.title = `${{ today: 'Today', discoveries: 'Discoveries', library: 'Library', puzzles: 'Puzzles', training: 'Training', time: 'Time', prepare: 'Prepare', progress: 'Progress', games: 'Games', review: 'Review', journal: 'Journal', insights: 'Insights', plan: 'Plan' }[sec]} · Rokade`;
   requestAnimationFrame(moveInk);
   if (sec === 'discoveries' && arg[0]) {
     if (lastSec !== 'discoveries') draw('discoveries', []);
@@ -387,7 +387,7 @@ function renderGames() {
 
 function bindGameSync() {
   const au = $('#gAuto');
-  if (au) au.onchange = () => { C.setAutoSync(+au.value); renderAccount(); toast(+au.value ? 'Games will update automatically while Outpost is open' : 'Automatic updates are off'); };
+  if (au) au.onchange = () => { C.setAutoSync(+au.value); renderAccount(); toast(+au.value ? 'Games will update automatically while Rokade is open' : 'Automatic updates are off'); };
   const go = () => sync($('#gUser').value);
   $('#gSync').onclick = go;
   $('#gUser').onkeydown = (e) => { if (e.key === 'Enter') go(); };

@@ -1,4 +1,4 @@
-// Fit Outpost's accuracy formula to chess.com's, from a public sample of games
+// Fit Rokade's accuracy formula to chess.com's, from a public sample of games
 // (tools/fetch_accuracy_sample.py). Each game is reviewed with the bundled Stockfish, then three
 // parameters are grid-searched to minimise the error against chess.com's per-player accuracy:
 //   k: scale on win-chance loss per move (how harshly a lost point counts)

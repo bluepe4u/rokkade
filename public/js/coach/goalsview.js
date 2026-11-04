@@ -27,7 +27,7 @@ export function goalsHTML(C) {
   const goals = C.prog.goals || [];
   const tcs = [...new Set(C.games.map((x) => x.tc))];
   return `<section class="panel-card rise goals"><div class="row"><h2 class="h3" style="margin:0">Your goals</h2><span class="spacer"></span><button class="btn sm" id="glAdd">+ Add a goal</button></div>
-    ${goals.length ? `<div class="gl-list">${goals.map((g, i) => goalCard(C, g, i)).join('')}</div>` : '<p class="note">Set a target, for example a rating by a date, and Outpost projects when you will reach it at your current pace.</p>'}
+    ${goals.length ? `<div class="gl-list">${goals.map((g, i) => goalCard(C, g, i)).join('')}</div>` : '<p class="note">Set a target, for example a rating by a date, and Rokade projects when you will reach it at your current pace.</p>'}
     <form class="gl-form" id="glForm" hidden>
       <select class="select" id="glType">${Object.entries(GOAL_TYPES).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('')}</select>
       <select class="select" id="glTc">${(tcs.length ? tcs : ['blitz']).map((t) => `<option>${esc(t)}</option>`).join('')}</select>

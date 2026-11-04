@@ -10,7 +10,7 @@ Then:  node tools/calibrate-accuracy.mjs OUT.json
 """
 import argparse, json, random, sys, time, urllib.request
 
-UA = "outpost-accuracy-calibration/1.0 (offline research tool)"
+UA = "rokade-accuracy-calibration/1.0 (offline research tool)"
 API = "https://api.chess.com/pub"
 COUNTRIES = ["IS", "EE", "LU", "MT", "CY", "SI", "LV", "LT", "IE", "NZ", "FI", "NO", "DK", "HR", "UY"]
 BANDS = [(0, 800), (800, 1200), (1200, 1600), (1600, 2000), (2000, 3500)]

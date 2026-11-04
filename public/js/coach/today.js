@@ -150,7 +150,7 @@ export function renderToday(view, C, S, { quiet = false } = {}) {
         ${tracked.length ? `<a class="tile rise tile-link" href="#progress"><span class="eyebrow">Your positions</span><b>${tracked.filter((t) => t.status === 'improving').length}<small> improving</small></b><span>${tracked.filter((t) => t.status === 'slipping').length} slipping · ${tracked.filter((t) => t.worked).length} worked on · see Progress →</span></a>` : ''}
       </section>
     </div>
-    ${!C.user ? `<section class="panel-card rise" style="margin-top:16px"><h2 class="h3">Connect your chess.com games</h2><p class="note">Outpost reviews every game in the background, finds the moves that surprise you, and builds your plan from them. <a class="link" href="#games">Import in Analyse → Games →</a></p></section>` : ''}`;
+    ${!C.user ? `<section class="panel-card rise" style="margin-top:16px"><h2 class="h3">Connect your chess.com games</h2><p class="note">Rokade reviews every game in the background, finds the moves that surprise you, and builds your plan from them. <a class="link" href="#games">Import in Analyse → Games →</a></p></section>` : ''}`;
   bindGoals(view, C);
   bindPlanCard(view, C);
   if (!quiet) { stagger(view, 55); countUp(view); }

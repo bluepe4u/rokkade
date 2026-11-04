@@ -544,7 +544,7 @@ a.btn.cta { color: var(--cta-foreground); }
   .tab-badge { margin-left: 4px; }
 }
 
-/* ═════════ Outpost shell: one header, one motion language on every page ═════════ */
+/* ═════════ Rokade shell: one header, one motion language on every page ═════════ */
 .topbar .brand { text-decoration: none; color: inherit; }
 .mode-tabs { position: relative; }
 .mode-tabs a { position: relative; z-index: 1; transition: color .25s var(--ease-out); }

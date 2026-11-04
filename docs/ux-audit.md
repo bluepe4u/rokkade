@@ -15,7 +15,7 @@
 
 ## What changes
 
-1. **Name: Outpost.** In chess an outpost is a square that's protected, can't be chased away, and lets a piece work from a strong base. That's the product's promise: a base you improve from. The name is set in one place (`public/js/shell.js`).
+1. **Name: Rokade** (Dutch for castling: king safety and rook activity in one move). That's the product's promise: a solid base, then steady progress. The name is set in one place (`public/js/shell.js`).
 2. **One header everywhere**, in the order of the improvement loop:
    **Today · Play · Study · Analyse · Plan · 4-Player**
    - *Today*: new home. Daily session, streak, progress.

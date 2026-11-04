@@ -1,7 +1,9 @@
 // The app shell shared by every page: brand, the main navigation (in the order of the
 // improvement loop), the theme toggle, the Study badge, and a sliding indicator.
 // <header class="topbar" data-shell="play|coach|four"> … children with data-keep stay … </header>
-export const BRAND = 'Outpost';
+export const BRAND = 'Rokade';
+// The mark: an R topped with a rook's battlements; the terracotta leg is the castling step.
+export const LOGO = `<svg viewBox="0 0 64 64" aria-hidden="true"><path class="lg-body" fill-rule="evenodd" d="M17 13h6.5v4.5h3.5V13h5v4.5h3.5V13H42v14.5c0 5.3-3.7 9-9.2 9H24.5V51H17zM24.5 23.5v7h9.6c2.3 0 3.6-1.3 3.6-3.5s-1.3-3.5-3.6-3.5z"/><path class="lg-leg" d="M31.5 39.5h8L48 51h-8z"/></svg>`;
 export const TAGLINE = 'Get better at chess, a little every day';
 
 // group → coach section that opens it
@@ -42,7 +44,7 @@ if (header) {
   const link = (n) => (n.href ? n.href : inCoach ? `#${n.sec}` : `coach.html#${n.sec}`);
   header.innerHTML = `
     <a class="brand" href="${inCoach ? '#today' : 'coach.html#today'}" aria-label="${BRAND}: Today">
-      <span class="brand-mark"><img src="pieces/wN.svg" alt="" /></span>
+      <span class="brand-mark">${LOGO}</span>
       <span class="brand-name">${BRAND.toUpperCase()}</span>
     </a>
     <nav class="mode-tabs" aria-label="Main">

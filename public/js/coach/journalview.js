@@ -125,7 +125,7 @@ export function planCardHTML(C, { compact = false } = {}) {
     if (!C.games.length) return '';
     const sug = planSuggestions(C);
     return `<section class="panel-card rise plan-card none"><div class="row"><div><span class="eyebrow">Your plan</span><h2 class="h3" style="margin:2px 0 0">Pick one thing to fix for 4 weeks</h2></div></div>
-      <p class="note">One focus, one number to move, a few minutes of practice a day. Outpost compares your games after you start with the games before, and only calls it a change when it is bigger than the noise.</p>
+      <p class="note">One focus, one number to move, a few minutes of practice a day. Rokade compares your games after you start with the games before, and only calls it a change when it is bigger than the noise.</p>
       <div class="plan-sugg">${sug.map((s, i) => `<button class="plan-opt${i === 0 ? ' top' : ''}" data-start="${s.metric}"><b>${esc(TEMPLATES[s.metric].title)}</b><small>${esc(s.why)}</small><span class="note">Measured by: ${esc(METRICS[s.metric].label.toLowerCase())}</span></button>`).join('')}</div></section>`;
   }
   const r = evaluatePlan(plan, journalCtx(C));
@@ -184,7 +184,7 @@ const J = { tk: 0 };
 export function renderJournal(view, C, arg = [], { quiet = false } = {}) {
   const tk = ++J.tk;
   if (!C.games.length) {
-    view.innerHTML = `<section class="panel-card rise"><span class="eyebrow">Journal</span><h1 class="h1">Why did that happen?</h1><p class="lede">After each game, Outpost shows you the critical moment and asks one question. Your answers, joined with the engine's numbers, show where your games really go wrong.</p><a class="btn cta" href="#games">Import your games <span class="arrow">→</span></a></section>`;
+    view.innerHTML = `<section class="panel-card rise"><span class="eyebrow">Journal</span><h1 class="h1">Why did that happen?</h1><p class="lede">After each game, Rokade shows you the critical moment and asks one question. Your answers, joined with the engine's numbers, show where your games really go wrong.</p><a class="btn cta" href="#games">Import your games <span class="arrow">→</span></a></section>`;
     stagger(view);
     return;
   }
@@ -212,7 +212,7 @@ export function renderJournal(view, C, arg = [], { quiet = false } = {}) {
       </div>
       <aside class="j-side">
         <section class="panel-card rise"><h2 class="h3" style="margin:0">Where your losses come from</h2>
-          <p class="note" style="margin:4px 0 10px">Your own tags where you journaled, otherwise the ones Outpost detected. ${journaled ? `${confirmedShare}% of recent games confirmed by you.` : 'Journal a few games to confirm them.'}</p>
+          <p class="note" style="margin:4px 0 10px">Your own tags where you journaled, otherwise the ones Rokade detected. ${journaled ? `${confirmedShare}% of recent games confirmed by you.` : 'Journal a few games to confirm them.'}</p>
           ${tags.length ? tags.map((t) => `<div class="jtag"><div class="row"><b>${esc(tagLabel(t.tag))}</b><span class="spacer"></span><span class="mono">${Math.round(t.lossShare * 100)}%</span></div>
             <div class="jbar"><i data-w="${Math.round(t.lossShare * 100)}"></i></div>
             <small class="note">${t.losses} of ${t.totalLosses} ${t.totalLosses === 1 ? 'loss' : 'losses'}${t.confirmed ? ` · ${t.confirmed} confirmed` : ' · detected'}${t.score != null && t.scoreWithout != null && t.n >= 5 ? ` · you score ${pct(t.score)} with it, ${pct(t.scoreWithout)} without` : ''}${t.bpg != null && t.bpgWithout != null && t.n >= 5 ? ` · ${t.bpg.toFixed(1)} blunders a game vs ${t.bpgWithout.toFixed(1)}` : ''}</small></div>`).join('') : '<p class="note">Tags appear as your games are reviewed.</p>'}

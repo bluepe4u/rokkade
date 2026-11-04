@@ -2,7 +2,7 @@ import { moveAccuracy } from '../solver.js';
 
 // Accuracy calibration: chess.com reports its own accuracy per player on most games. We fit a
 // mapping from our accuracy to theirs (quadratic when there is enough data, linear otherwise),
-// so the numbers in Outpost read like the ones players know.
+// so the numbers in Rokade read like the ones players know.
 
 /** Pairs of (our raw accuracy, chess.com accuracy) from reviewed games that have both. */
 export function calibrationPairs(games, idx) {
@@ -67,7 +67,7 @@ export function fitCalibration(pairs) {
 
 // ───── the per-move formula, with parameters fitted on public chess.com games ─────
 
-/** Outpost's original formula: Lichess per-move accuracy, average of mean and harmonic mean, all moves. */
+/** Rokade's original formula: Lichess per-move accuracy, average of mean and harmonic mean, all moves. */
 export const DEFAULT_PARAMS = { k: 1, w: 0.5, b: 0 };
 
 /**
