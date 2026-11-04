@@ -360,10 +360,8 @@ function sparkSVG(idea, n) {
 function chooseDefault(it) {
   const a = it.analysis;
   const best = a?.lines?.[0]?.san;
-  if (st.chosen) return st.chosen;
-  const u = it.usual;
-  if (u?.eval && u.san !== best && u.eval.loss < 5) return u.san; // your own move holds: keep it
-  return best;
+  // You learn the engine's best line; keeping your own move is an explicit choice.
+  return st.chosen || best;
 }
 
 function scene3() {
@@ -385,7 +383,7 @@ function scene3() {
     <div id="spark">${sparkSVG(a.idea, 1)}</div>
     <div class="row"><button class="btn sm" id="replay">↻ Replay the line</button></div>
     <div class="versus">${youCard}${engCard}</div>
-    ${keepable ? '<p class="note">Your own move holds up (within 5 points of win chance), so you can keep it. Tap a card to choose what goes into your library.</p>' : u && u.san !== best.san ? `<p class="note">You will practise <b>${esc(best.san)}</b> and it goes into your library.</p>` : ''}`;
+    <p class="note">You will practise the engine's <b>${esc(best.san)}</b>, and it goes into your library.${keepable ? ` Your own <b>${esc(u.san)}</b> also holds up (within 5 points of win chance): tap its card if you would rather keep it.` : ''}</p>`;
 }
 
 async function play3(tk) {
