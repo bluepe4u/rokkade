@@ -1,6 +1,8 @@
+import { moveAccuracy } from '../solver.js';
+
 // Accuracy calibration: chess.com reports its own accuracy per player on most games. We fit a
 // mapping from our accuracy to theirs (quadratic when there is enough data, linear otherwise),
-// so the numbers in Outpost read like the ones players know.
+// so the numbers in Rokade read like the ones players know.
 
 /** Pairs of (our raw accuracy, chess.com accuracy) from reviewed games that have both. */
 export function calibrationPairs(games, idx) {
@@ -61,4 +63,25 @@ export function fitCalibration(pairs) {
   }
   const maeRaw = pairs.reduce((s, p) => s + Math.abs(p.raw - p.ref), 0) / pairs.length;
   return { ...best, n: pairs.length, maeRaw: +maeRaw.toFixed(2), maeFit: +bestMae.toFixed(2) };
+}
+
+// ───── the per-move formula, with parameters fitted on public chess.com games ─────
+
+/** Rokade's original formula: Lichess per-move accuracy, average of mean and harmonic mean, all moves. */
+export const DEFAULT_PARAMS = { k: 1, w: 0.5, b: 0 };
+
+/**
+ * Game accuracy for one side from per-ply win-chance losses (index 0 = White's first move).
+ * k scales each loss, w weights the harmonic mean against the plain mean, b skips opening plies.
+ */
+export function paramAccuracy(loss, side, p = DEFAULT_PARAMS) {
+  const a = [];
+  for (let i = p.b || 0; i < loss.length; i++) {
+    if ((i % 2 === 0) !== (side === 'w')) continue;
+    a.push(moveAccuracy((p.k ?? 1) * loss[i]));
+  }
+  if (!a.length) return 100;
+  const mean = a.reduce((s, v) => s + v, 0) / a.length;
+  const har = a.length / a.reduce((s, v) => s + 1 / Math.max(v, 1), 0);
+  return +((1 - p.w) * mean + p.w * har).toFixed(1);
 }

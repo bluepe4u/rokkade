@@ -48,6 +48,7 @@
     --muted: #090f1b;
     --muted-foreground: #8b94a6;
     --accent-brand: #d9aa90;
+    --logo-leg: #8a3b22;
     --cta: #a25c44;
     --cta-deep: #8e4b36;
     --cta-foreground: #fbf3ee;
@@ -78,6 +79,7 @@
   --muted: #090f1b;
   --muted-foreground: #8b94a6;
   --accent-brand: #d9aa90;
+  --logo-leg: #8a3b22;
   --cta: #a25c44;
   --cta-deep: #8e4b36;
   --cta-foreground: #fbf3ee;
@@ -131,7 +133,10 @@ kbd {
   width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center;
   background: var(--accent-brand);
 }
-.brand-mark img { width: 28px; height: 28px; filter: drop-shadow(0 1px 1px #0005); }
+.brand-mark svg { width: 36px; height: 36px; display: block; }
+.brand-mark .lg-body { fill: var(--background); }
+.brand-mark .lg-leg { fill: var(--logo-leg, var(--cta)); transform-origin: 31px 51px; transition: transform .35s var(--ease-spring, cubic-bezier(.34, 1.56, .64, 1)); }
+.brand:hover .lg-leg { transform: translateX(3px) skewX(-6deg); }
 .brand-name { font-family: var(--font-display); font-weight: 700; letter-spacing: .14em; font-size: 15px; }
 .brand-name em { font-style: normal; color: var(--cta); }
 .topbar-status {

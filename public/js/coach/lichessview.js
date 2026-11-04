@@ -5,7 +5,7 @@ import { explore, tokenStatus, saveToken, toLichess } from './lichess.js';
 import { playerProfile } from './guide.js';
 
 let tokenKnown = null;
-const TOKEN_URL = 'https://lichess.org/account/oauth/token/create?description=Outpost%20opening%20explorer';
+const TOKEN_URL = 'https://lichess.org/account/oauth/token/create?description=Rokade%20opening%20explorer';
 
 function level(C) {
   if (!C.games.length) return { rating: 1500, tc: 'blitz', guessed: true };

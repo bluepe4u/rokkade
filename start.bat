@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title Outpost
+title Rokade
 where node >nul 2>nul
 if %errorlevel%==0 (
   node server.js %*

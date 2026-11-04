@@ -7,7 +7,7 @@ import { pct, plural } from './games.js';
 const fmtDate = (d) => d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: d.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined });
 const fmtVal = (type, v) => (v == null ? '–' : type === 'accuracy' ? v.toFixed(1) : String(Math.round(v)));
 
-function ctx(C) { return { games: C.games, idx: C.reviewIdx, acc: (v) => C.calAcc(v), prog: C.prog }; }
+function ctx(C) { return { games: C.games, idx: C.reviewIdx, accOf: (x) => C.accOf(x.id, x.col), prog: C.prog }; }
 
 function goalCard(C, g, i) {
   const r = goalProgress(g, ctx(C));
@@ -27,7 +27,7 @@ export function goalsHTML(C) {
   const goals = C.prog.goals || [];
   const tcs = [...new Set(C.games.map((x) => x.tc))];
   return `<section class="panel-card rise goals"><div class="row"><h2 class="h3" style="margin:0">Your goals</h2><span class="spacer"></span><button class="btn sm" id="glAdd">+ Add a goal</button></div>
-    ${goals.length ? `<div class="gl-list">${goals.map((g, i) => goalCard(C, g, i)).join('')}</div>` : '<p class="note">Set a target, for example a rating by a date, and Outpost projects when you will reach it at your current pace.</p>'}
+    ${goals.length ? `<div class="gl-list">${goals.map((g, i) => goalCard(C, g, i)).join('')}</div>` : '<p class="note">Set a target, for example a rating by a date, and Rokade projects when you will reach it at your current pace.</p>'}
     <form class="gl-form" id="glForm" hidden>
       <select class="select" id="glType">${Object.entries(GOAL_TYPES).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('')}</select>
       <select class="select" id="glTc">${(tcs.length ? tcs : ['blitz']).map((t) => `<option>${esc(t)}</option>`).join('')}</select>
@@ -76,6 +76,6 @@ export function weekHTML(C) {
       ${row('Lines learned', n.learned, p.learned)}
       ${n.ratingChange ? `<div class="wk-row"><span>Rating (${esc(n.ratingChange.tc)})</span><b>${n.ratingChange.to}</b><small class="${n.ratingChange.delta >= 0 ? 'up' : 'down'}">${n.ratingChange.delta >= 0 ? '▲' : '▼'} ${Math.abs(n.ratingChange.delta)}</small><span class="note">from ${n.ratingChange.from}</span></div>` : ''}
     </div>
-    ${n.best ? `<a class="wk-best" href="#review/${encodeURIComponent(n.best.id)}">Best game this week: beat ${esc(n.best.opp)} with ${C.calAcc(C.reviewIdx[n.best.id][n.best.col])}% accuracy →</a>` : ''}
+    ${n.best ? `<a class="wk-best" href="#review/${encodeURIComponent(n.best.id)}">Best game this week: beat ${esc(n.best.opp)} with ${C.accOf(n.best.id, n.best.col)}% accuracy →</a>` : ''}
     <p class="note" style="margin:8px 0 0">${n.practice.puzzle ? `${plural(n.practice.puzzle, 'puzzle')} · ` : ''}${n.practice.drill ? `${plural(n.practice.drill, 'drill')} · ` : ''}${n.practice.train ? `${plural(n.practice.train, 'training exercise')} · ` : ''}${n.practice.study ? `${plural(n.practice.study, 'position')} studied` : ''}</p></section>`;
 }

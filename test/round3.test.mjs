@@ -107,3 +107,14 @@ test('opponent prep: what they play and what to expect against your library', ()
 test('endgame positions are legal', () => {
   for (const e of ENDGAMES) assert.doesNotThrow(() => new Chess(e.fen), e.id);
 });
+
+test('parametric accuracy: defaults reproduce the original formula; parameters move it as expected', async () => {
+  const { paramAccuracy, DEFAULT_PARAMS } = await import('../public/js/coach/calibration.js');
+  const { accuracyOf } = await import('../public/js/coach/analysis.js');
+  const loss = [0, 2, 5, 0, 30, 1, 0, 8, 12, 0];
+  const white = loss.filter((_, i) => i % 2 === 0);
+  assert.equal(paramAccuracy(loss, 'w', DEFAULT_PARAMS), +accuracyOf(white).toFixed(1));
+  assert.ok(paramAccuracy(loss, 'w', { k: 0.5, w: 0.5, b: 0 }) > paramAccuracy(loss, 'w', DEFAULT_PARAMS), 'a smaller k is more lenient');
+  assert.ok(paramAccuracy(loss, 'w', { k: 1, w: 0, b: 0 }) > paramAccuracy(loss, 'w', { k: 1, w: 1, b: 0 }), 'the harmonic mean punishes bad moves more');
+  assert.ok(paramAccuracy(loss, 'w', { k: 1, w: 0.5, b: 6 }) > paramAccuracy(loss, 'w', DEFAULT_PARAMS), 'skipping the first plies drops the early blunder here');
+});

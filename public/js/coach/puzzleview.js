@@ -8,7 +8,7 @@ import { moveLabel } from './library.js';
 import { puzzleKey, dayKey } from './progress.js';
 import { KIND, focusFor, puzzleQueue, puzzleStats } from './puzzles.js';
 import { playerProfile, priorities } from './guide.js';
-import { interactiveQueue } from './review.js';
+import { judgeMove, bestMove } from './judge.js';
 
 const PZ = { filter: 'all', session: null, view: null, C: null, tk: 0 };
 window.__pz = PZ;
@@ -113,10 +113,16 @@ async function nextPuzzle() {
   const board = new AnimBoard($('#pzBoard'), { orientation: moverW ? 'w' : 'b' });
   const c = new Chess(p.fen);
   board.setFen(c.fen(), { animate: false, lastMove: [] });
-  let k = 0;
+  // Lichess-style: any move about as good as the best counts. If you play an alternative, the
+  // puzzle continues down your line with the engine's best reply.
+  const userMoves = steps.length > 1 ? 2 : 1;
+  let line = steps.slice(); // the stored solution from here, while you follow it
+  let done = 0;
   let mistakes = 0;
   let hinted = false;
   const fb = $('#pzFb');
+  const expected = () => (line && line.length ? line[0] : null);
+  window.__pzFen = () => c.fen();
   const finish = async (clean, note) => {
     board.interactive(null);
     await C.solvePuzzle(p.id, clean);
@@ -127,21 +133,22 @@ async function nextPuzzle() {
     fb.innerHTML = `${note} ${clean ? `Back in ${e?.iv ?? 1} ${e?.iv === 1 ? 'day' : 'days'}.` : 'It comes back tomorrow.'}`;
     $('#pzAct').innerHTML = `<button class="btn cta" id="pzNext">Next puzzle <span class="arrow">→</span></button><a class="btn" href="#review/${encodeURIComponent(p.gid)}/${p.ply}">See it in the game</a>`;
     $('#pzNext').onclick = () => { session.i++; nextPuzzle(); };
-    if (clean) board.pulse(board.marks.last?.[1] || 'e4', 'var(--success)');
   };
-  const reveal = () => {
-    const m = new Chess(c.fen()).move(steps[k]);
-    board.setArrows([{ from: m.from, to: m.to, color: '#3f7a52', key: 'sol' }]);
-    return m.san;
+  const solutionMove = async () => (expected() ? new Chess(c.fen()).move(expected()) : bestMove(c.fen()));
+  const reveal = async () => {
+    const m = await solutionMove();
+    if (m) board.setArrows([{ from: m.from, to: m.to, color: '#3f7a52', key: 'sol' }]);
+    return m?.san || '';
   };
-  $('#pzHint').onclick = () => {
+  $('#pzHint').onclick = async () => {
     hinted = true;
-    const m = new Chess(c.fen()).move(steps[k]);
+    const m = await solutionMove();
+    if (!m || tk !== PZ.tk) return;
     board.setMarks({ ...board.marks, hint: [m.from] });
     fb.className = 'feedback';
     fb.textContent = `Look at your ${({ p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' })[m.piece]} on ${m.from}.`;
   };
-  $('#pzSkip').onclick = () => { const s = reveal(); finish(false, `The move was ${s}.`); };
+  $('#pzSkip').onclick = async () => { const s = await reveal(); finish(false, `The move was ${s}.`); };
   const enable = () => board.interactive({
     canPick: (sq) => c.get(sq)?.color === c.turn(),
     targets: (sq) => c.moves({ square: sq, verbose: true }).map((m) => m.to),
@@ -149,50 +156,46 @@ async function nextPuzzle() {
     onMove,
   });
   async function onMove(from, to) {
-      const want = new Chess(c.fen()).move(steps[k]);
-      const t = new Chess(c.fen());
-      const mv = t.move({ from, to, promotion: want.promotion && want.from === from && want.to === to ? want.promotion : 'q' });
-      board.setFen(t.fen(), { lastMove: [from, to], duration: 200 });
-      let ok = mv.san === want.san;
-      let alsoGood = false;
-      if (!ok && k === 0 && beforeWp != null) {
-        // A different move can be just as good: ask the engine.
-        board.interactive(null);
-        fb.className = 'feedback';
-        fb.textContent = `Checking ${mv.san}…`;
-        let after = t.isCheckmate() ? 100 : t.isDraw() ? 50 : null;
-        if (after == null) { const r = await interactiveQueue().go(t.fen(), { depth: 12 }); after = r ? 100 - wp(r.score) : 0; }
-        if (tk !== PZ.tk) return;
-        alsoGood = beforeWp - after <= 3;
-        ok = alsoGood;
-      }
-      if (!ok) {
-        mistakes++;
-        board.shake();
-        fb.className = 'feedback no';
-        fb.textContent = mistakes >= 2 ? `${mv.san} isn't it either.` : `${mv.san} isn't the move. Try again.`;
-        await sleep(600);
-        if (tk !== PZ.tk) return;
-        board.setFen(c.fen(), { duration: 200, lastMove: k ? board.marks.last : [] });
-        if (mistakes >= 3) { const s = reveal(); finish(false, `The move was ${s}.`); return; }
-        enable();
-        return;
-      }
-      c.move(mv.san);
-      board.pulse(to, 'var(--success)');
-      if (alsoGood) { finish(!mistakes && !hinted, `${mv.san} works too (the engine's choice was ${want.san}).`); return; }
-      k++;
-      if (k >= steps.length) { finish(!mistakes && !hinted, `${mv.san}! ${p.kind === 'punish' ? 'That punishes it.' : 'That keeps the advantage.'}`); return; }
-      fb.className = 'feedback ok';
-      fb.textContent = `${mv.san}. Keep going.`;
-      board.interactive(null);
-      await sleep(550);
+    const fen0 = c.fen();
+    const exp = expected() ? new Chess(fen0).move(expected()) : null;
+    const t = new Chess(fen0);
+    const mv = t.move({ from, to, promotion: exp && exp.from === from && exp.to === to && exp.promotion ? exp.promotion : 'q' });
+    board.setFen(t.fen(), { lastMove: [from, to], duration: 200 });
+    board.interactive(null);
+    if (mv.san !== expected()) { fb.className = 'feedback'; fb.textContent = `Checking ${mv.san}…`; }
+    const j = await judgeMove(fen0, mv.san, { expected: expected() });
+    if (tk !== PZ.tk) return;
+    if (!j.ok) {
+      mistakes++;
+      board.shake();
+      fb.className = 'feedback no';
+      fb.textContent = `${mv.san} gives up about ${Math.round(j.loss)} points of win chance. ${mistakes >= 2 ? 'Use a hint if you like.' : 'Try again.'}`;
+      await sleep(650);
       if (tk !== PZ.tk) return;
-      const r = c.move(steps[k]);
-      board.setFen(c.fen(), { lastMove: [r.from, r.to] });
-      k++;
-      await sleep(250);
+      board.setFen(c.fen(), { duration: 200, lastMove: done ? board.marks.last : [] });
+      if (mistakes >= 3) { const s = await reveal(); finish(false, `The move was ${s}.`); return; }
       enable();
+      return;
+    }
+    c.move(mv.san);
+    board.pulse(to, 'var(--success)');
+    done++;
+    const alt = !j.exact && j.bestSan && j.bestSan !== mv.san ? ` (the engine slightly prefers ${j.bestSan})` : '';
+    if (done >= userMoves || c.isGameOver() || !(line?.[1] || j.reply)) {
+      finish(!mistakes && !hinted, `${mv.san}! ${p.kind === 'punish' ? 'That punishes it.' : 'That keeps the advantage.'}${alt}`);
+      return;
+    }
+    // Their reply: the stored line while you follow it, otherwise the engine's answer to your move.
+    let reply;
+    if (line && mv.san === line[0] && line[1]) { reply = line[1]; line = line.slice(2); } else { reply = j.reply.san; line = null; }
+    fb.className = 'feedback ok';
+    fb.textContent = `${mv.san}${alt ? ' works too' : ''}. Keep going.`;
+    await sleep(550);
+    if (tk !== PZ.tk) return;
+    const r = c.move(reply);
+    board.setFen(c.fen(), { lastMove: [r.from, r.to] });
+    await sleep(250);
+    enable();
   }
   enable();
   void toast;

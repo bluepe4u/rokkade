@@ -28,7 +28,7 @@ export function renderPrep(view, C, args = []) {
   const opps = recentOpponents(C);
   const recent = ls.get('sfet.prep.recent', []);
   view.innerHTML = `<span class="eyebrow">Analyse</span><h1 class="h1">Prepare for an opponent</h1>
-    <p class="lede">Enter any chess.com username. Outpost downloads their recent public games and shows what they play, how they score, how their games end, and what to expect against your library.</p>
+    <p class="lede">Enter any chess.com username. Rokade downloads their recent public games and shows what they play, how they score, how their games end, and what to expect against your library.</p>
     <div class="prep-search rise"><input class="input lg" id="prName" placeholder="chess.com username" value="${esc(PR.name)}" autocomplete="off" spellcheck="false">
       <select class="select" id="prMonths">${[[1, 'Last month'], [3, 'Last 3 months'], [6, 'Last 6 months']].map(([v, t]) => `<option value="${v}" ${v === PR.months ? 'selected' : ''}>${t}</option>`).join('')}</select>
       <button class="btn cta lg" id="prGo" ${PR.busy ? 'disabled' : ''}>${PR.busy ? 'Loading…' : 'Prepare'} <span class="arrow">→</span></button></div>

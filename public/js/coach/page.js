@@ -1,4 +1,4 @@
-// Outpost (coach.html): section router, account bar, Discoveries inbox, Games and Plan.
+// Rokade (coach.html): section router, account bar, Discoveries inbox, Games and Plan.
 import { coach } from './service.js';
 import { setActive, GROUP_OF } from '../shell.js';
 import { renderToday } from './today.js';
@@ -7,6 +7,8 @@ import { renderProgress } from './progressview.js';
 import { renderTraining } from './trainingview.js';
 import { renderTime } from './timeview.js';
 import { renderPrep } from './prepview.js';
+import { renderJournal, journalBusy, planCardHTML, bindPlanCard, planHistoryHTML } from './journalview.js';
+import { journalInbox } from './journal.js';
 import { puzzleQueue } from './puzzles.js';
 import { $, $$, esc, miniBoard, countUp, ring, toast, since, when, stagger } from './ui.js';
 import { fenOf } from './discoveries.js';
@@ -24,7 +26,7 @@ const bindFilters = (root, redraw) => fBind(S, root, redraw);
 
 const C = coach();
 const view = $('#view');
-const SECTIONS = ['today', 'discoveries', 'library', 'puzzles', 'training', 'games', 'review', 'insights', 'time', 'progress', 'prepare', 'plan', 'guide'];
+const SECTIONS = ['today', 'discoveries', 'library', 'puzzles', 'training', 'games', 'review', 'journal', 'insights', 'time', 'progress', 'prepare', 'plan', 'guide'];
 export const S = {
   f: { tc: 'all', col: 'all', per: 'all', rated: 'all', ...ls.get('coach-f', {}) },
   disc: { side: 'all', show: 'todo', ...ls.get('sfet.coach.discFilter', {}) },
@@ -44,6 +46,12 @@ function moveInk() {
   ink.style.transform = `translateX(${cur.offsetLeft}px)`;
 }
 addEventListener('resize', moveInk);
+// Tabs change width when a badge appears or fonts load: keep the highlight on the current tab.
+if ('ResizeObserver' in window) {
+  const ro = new ResizeObserver(() => moveInk());
+  $$('#subnav a').forEach((a) => ro.observe(a));
+}
+document.fonts?.ready.then(() => moveInk());
 
 const ago = (ms) => { const m = Math.round((Date.now() - ms) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
 function renderAccount() {
@@ -64,6 +72,8 @@ function paintDue() {
   b.hidden = !n;
   const pb = $('#pzBadge');
   if (pb) { const m = puzzleQueue(C.puzzles(), C.prog).length; pb.textContent = m ? String(m) : ''; pb.hidden = !m; }
+  const jb = $('#jBadge');
+  if (jb) { const m = journalInbox(C.games, C.journal, { days: 3 }).length; jb.textContent = m ? String(m) : ''; jb.hidden = !m; }
 }
 
 function renderBg() {
@@ -109,7 +119,7 @@ export async function route() {
     a.hidden = a.dataset.group !== group;
     if (a.dataset.sec === sec) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
-  document.title = `${{ today: 'Today', discoveries: 'Discoveries', library: 'Library', puzzles: 'Puzzles', training: 'Training', time: 'Time', prepare: 'Prepare', progress: 'Progress', games: 'Games', review: 'Review', insights: 'Insights', plan: 'Plan' }[sec]} · Outpost`;
+  document.title = `${{ today: 'Today', discoveries: 'Discoveries', library: 'Library', puzzles: 'Puzzles', training: 'Training', time: 'Time', prepare: 'Prepare', progress: 'Progress', games: 'Games', review: 'Review', journal: 'Journal', insights: 'Insights', plan: 'Plan' }[sec]} · Rokade`;
   requestAnimationFrame(moveInk);
   if (sec === 'discoveries' && arg[0]) {
     if (lastSec !== 'discoveries') draw('discoveries', []);
@@ -135,6 +145,7 @@ function draw(sec, arg) {
   else if (sec === 'prepare') renderPrep(view, C, arg);
   else if (sec === 'games') renderGames();
   else if (sec === 'review') renderReview(view, C, S, arg);
+  else if (sec === 'journal') renderJournal(view, C, arg);
   else if (sec === 'insights') renderInsights(view, C, S);
   else renderGuide();
   window.scrollTo({ top: 0 });
@@ -376,7 +387,7 @@ function renderGames() {
 
 function bindGameSync() {
   const au = $('#gAuto');
-  if (au) au.onchange = () => { C.setAutoSync(+au.value); renderAccount(); toast(+au.value ? 'Games will update automatically while Outpost is open' : 'Automatic updates are off'); };
+  if (au) au.onchange = () => { C.setAutoSync(+au.value); renderAccount(); toast(+au.value ? 'Games will update automatically while Rokade is open' : 'Automatic updates are off'); };
   const go = () => sync($('#gUser').value);
   $('#gSync').onclick = go;
   $('#gUser').onkeydown = (e) => { if (e.key === 'Enter') go(); };
@@ -385,7 +396,8 @@ function bindGameSync() {
 // ───────────────────────── Guide ─────────────────────────
 function renderGuide() {
   const { html } = buildGuide({ user: C.user, games: C.games, an: S.an, lib: C.lib, discoveries: C.list() });
-  view.innerHTML = `<div class="guide">${html}</div>`;
+  view.innerHTML = `${planCardHTML(C)}<div class="guide">${html}</div>${planHistoryHTML(C)}`;
+  bindPlanCard(view, C);
   stagger(view);
   countUp(view);
   requestAnimationFrame(() => $$('.hbar i', view).forEach((i) => { i.style.width = `${i.dataset.w}%`; }));
@@ -403,9 +415,11 @@ const LIVE = {
   plan: () => renderGuide(),
   progress: () => renderProgress(view, C, { quiet: true }),
   time: () => renderTime(view, C, { quiet: true }),
+  training: () => { if (!parseHash().arg[0]) renderTraining(view, C); },
   puzzles: () => { if (!parseHash().arg[0] && !puzzleSessionActive()) renderPuzzles(view, C); },
   insights: () => renderInsights(view, C, S, { quiet: true }),
   review: () => { if (!parseHash().arg[0]) renderReview(view, C, S, [], { quiet: true }); },
+  journal: () => { if (!journalBusy()) renderJournal(view, C, parseHash().arg, { quiet: true }); },
 };
 let liveTimer = null;
 function refreshLive(secs) {
@@ -432,20 +446,21 @@ function refreshLive(secs) {
     if (sec === 'discoveries' && $('#story').hidden) renderDiscoveries(true);
     refreshLive(['today', 'plan']);
   });
-  C.addEventListener('reviewed', () => { renderBg(); refreshLive(['review', 'insights', 'today', 'plan', 'progress', 'puzzles']); });
-  C.addEventListener('practice', () => { paintDue(); refreshLive(['today']); });
+  C.addEventListener('reviewed', () => { renderBg(); refreshLive(['review', 'insights', 'today', 'plan', 'progress', 'puzzles', 'training', 'journal']); });
+  C.addEventListener('practice', () => { paintDue(); refreshLive(['today', 'plan', 'journal']); });
+  C.addEventListener('journal', () => { paintDue(); refreshLive(['today', 'plan']); });
   C.addEventListener('synced', (e) => {
     renderAccount();
     const { fresh, discoveries } = e.detail || {};
     if (fresh) toast(`${plural(fresh, 'new game')} from chess.com${discoveries ? ` · ${plural(discoveries, 'new position')} to study` : ''}`);
-    refreshLive(['today', 'games', 'review', 'insights', 'plan', 'puzzles', 'progress', 'time']);
+    refreshLive(['today', 'games', 'review', 'journal', 'insights', 'plan', 'puzzles', 'progress', 'time', 'training']);
   });
   route();
   if (C.user) {
     try {
       await C.loadGames();
       await C.ingest(C.games);
-      refreshLive(['today', 'games', 'review', 'insights', 'plan', 'puzzles', 'progress', 'time']);
+      refreshLive(['today', 'games', 'review', 'journal', 'insights', 'plan', 'puzzles', 'progress', 'time', 'training']);
     } catch (e) { console.warn(e); }
   }
   C.kick();

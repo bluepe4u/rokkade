@@ -284,7 +284,7 @@ server.on('error', (err) => {
 
 server.listen(PORT, '127.0.0.1', () => {
   const url = `http://localhost:${PORT}/`;
-  console.log(`\n  Outpost running at ${url}\n  Press Ctrl+C to stop.\n`);
+  console.log(`\n  Rokade running at ${url}\n  Press Ctrl+C to stop.\n`);
   if (process.env.NO_OPEN) return;
   const opener = process.platform === 'win32' ? `start "" "${url}"`
     : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`;

@@ -15,7 +15,7 @@
 
 ## What changes
 
-1. **Name: Outpost.** In chess an outpost is a square that's protected, can't be chased away, and lets a piece work from a strong base. That's the product's promise: a base you improve from. The name is set in one place (`public/js/shell.js`).
+1. **Name: Rokade** (Dutch for castling: king safety and rook activity in one move). That's the product's promise: a solid base, then steady progress. The name is set in one place (`public/js/shell.js`).
 2. **One header everywhere**, in the order of the improvement loop:
    **Today · Play · Study · Analyse · Plan · 4-Player**
    - *Today*: new home. Daily session, streak, progress.
@@ -54,3 +54,13 @@ Ordered by how much they'd help someone improve.
 10. **Accessibility.** Keyboard play on the board, screen-reader move announcements and a colour-blind-safe palette for move classes are not done yet.
 11. **Data portability.** No export or backup button for the `data/` folder, and no way to sync between two computers.
 12. **Notifications.** "3 lines due" and "new game reviewed" only show inside the app; a gentle optional browser notification once a day would support the daily habit.
+
+## Product direction: journal and plan accountability
+
+The import → engine review → training plan layer is crowded (Chess.com Insights, Aimchess, Chessy and others). The gap is the player's own reflection joined to engine data, and checking whether a plan actually moved a number. Done so far:
+
+- **Journal card** per game with the critical moment and auto-suggested tags (clock, review, losing streak), so an entry takes seconds.
+- **Tag statistics** that mix confirmed and detected tags, plus score after a loss/win from the games alone.
+- **Plans** with one measured number, daily tasks and an honest verdict (minimum sample, change must beat the noise).
+
+Next, in order: a weekly report (top 3 problems by tag with example positions), Lichess game import, merging the 13 sections around the loop (Today · Games+Journal · Train · Plan · Insights), and only then a hosted version with sync, which is what a paid tier needs (see the market analysis).
