@@ -44,6 +44,12 @@ function moveInk() {
   ink.style.transform = `translateX(${cur.offsetLeft}px)`;
 }
 addEventListener('resize', moveInk);
+// Tabs change width when a badge appears or fonts load: keep the highlight on the current tab.
+if ('ResizeObserver' in window) {
+  const ro = new ResizeObserver(() => moveInk());
+  $$('#subnav a').forEach((a) => ro.observe(a));
+}
+document.fonts?.ready.then(() => moveInk());
 
 const ago = (ms) => { const m = Math.round((Date.now() - ms) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
 function renderAccount() {

@@ -64,6 +64,10 @@ if (header) {
   if (page === 'four') setActive('four');
   addEventListener('resize', () => moveInk(nav));
   document.fonts?.ready.then(() => moveInk(nav));
+  if ('ResizeObserver' in window) {
+    const ro = new ResizeObserver(() => moveInk(nav));
+    nav.querySelectorAll('a').forEach((a) => ro.observe(a));
+  }
   // The badge: positions ready to study (kept in localStorage by the Coach service).
   const paint = () => {
     let n = 0;
