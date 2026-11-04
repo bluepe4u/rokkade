@@ -1113,3 +1113,18 @@ span.jq { border: 0; padding: 0; }
 .plan-past .pv.worse { background: var(--destructive-muted); color: var(--destructive); }
 .jq-t { display: grid; min-width: 0; }
 .jq-t .note { font-size: 12px; }
+
+/* ───────── Review highlights and cheering ───────── */
+.moment span { display: grid; line-height: 1.15; text-align: left; }
+.moment span small { font: 500 10.5px var(--font-sans); color: var(--muted-foreground); }
+.moment.good { border-color: color-mix(in srgb, var(--cl-great) 45%, var(--border)); background: color-mix(in srgb, var(--cl-great) 7%, var(--card)); }
+.km-sum { display: block; font: 500 12.5px var(--font-sans); margin-top: 2px; color: var(--muted-foreground); }
+.km-sum .good { color: var(--success); }
+.km-sum .bad { color: var(--destructive); }
+.comment .story-text { font-size: 14.5px; line-height: 1.6; margin: 0 0 12px; }
+.comment .cm-text { font-size: 14.5px; line-height: 1.55; }
+.comment.cheer { background: linear-gradient(135deg, color-mix(in srgb, var(--c) 14%, var(--card)), var(--card) 60%); border-color: color-mix(in srgb, var(--c) 40%, var(--border)); }
+.comment.cheer .cm-chip { animation: pop .45s var(--ease-spring), cheerGlow 1.6s ease-out .2s; }
+.comment.cheer .cm-head b { color: var(--c); }
+@keyframes cheerGlow { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--c) 60%, transparent); } 100% { box-shadow: 0 0 0 16px transparent; } }
+@media (prefers-reduced-motion: reduce) { .comment.cheer .cm-chip { animation: none; } }

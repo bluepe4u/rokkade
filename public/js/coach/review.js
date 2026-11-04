@@ -14,6 +14,8 @@ import { store } from './store.js';
 import { moveLabel, sanLine } from './library.js';
 import { Maia } from '../maia.js';
 import { evalText } from './analysis.js';
+import { explainMove, highlights, MOMENT, gameStory } from './explain.js';
+import { confetti } from './story.js';
 
 const ENGINE_URL = new URL('../../engine/stockfish-19-lite-single.js', import.meta.url).href;
 let iq = null;
@@ -161,8 +163,8 @@ function graphSVG(R, col) {
 }
 
 const HELP = {
-  brilliant: 'A strong sacrifice: you gave up material and the position stayed good.',
-  great: 'The only good move in the position. Well found.',
+  brilliant: 'A sound sacrifice: material given up, and the position stays good.',
+  great: 'The only good move in the position. Hard to find.',
   best: "The engine's top choice.",
   excellent: 'Almost as good as the best move.',
   good: 'A reasonable move; something slightly better existed.',
@@ -170,27 +172,17 @@ const HELP = {
   forced: 'The only legal move.',
   inaccuracy: 'Not a disaster, but a better move was there.',
   mistake: 'This made your position noticeably worse.',
-  miss: 'Your opponent had just gone wrong, and this let them off the hook.',
+  miss: 'The other side had just gone wrong, and this let them off the hook.',
   blunder: 'A serious error that changes the evaluation a lot.',
 };
 const pl = (n, w, ws = `${w}s`) => `${n} ${n === 1 ? w : ws}`;
 
-function keyMoments(R, col) {
-  const out = [];
-  R.cl.forEach((c, i) => {
-    const mine = (i % 2 === 0) === (col === 'w');
-    if (mine && ['blunder', 'mistake', 'miss', 'brilliant', 'great'].includes(c)) out.push({ i, c, mine: true });
-    else if (!mine && c === 'blunder') out.push({ i, c, mine: false });
-  });
-  // keep the 8 biggest swings, in game order
-  return out.map((m) => ({ ...m, w: m.mine ? (ERROR_CLASSES.includes(m.c) ? R.loss[m.i] : 20) : R.loss[m.i] }))
-    .sort((a, b) => b.w - a.w).slice(0, 8).sort((a, b) => a.i - b.i);
+const MOMENT_COLOR = { brilliant: 'var(--cl-brilliant)', great: 'var(--cl-great)', mate: 'var(--cl-best)', punish: 'var(--cl-best)', win: 'var(--cl-best)', save: 'var(--cl-excellent)', blunder: 'var(--cl-blunder)', mistake: 'var(--cl-mistake)', miss: 'var(--cl-miss)', inaccuracy: 'var(--cl-inaccuracy)', theirs: 'var(--cl-blunder)' };
+function keyMoments(R, col, fens) {
+  return highlights(R, fens, col).map((m) => ({ ...m, c: R.cl[m.i] }));
 }
-
-function momentTitle(m) {
-  if (!m.mine) return 'Their mistake';
-  return { blunder: 'Your blunder', mistake: 'Your mistake', miss: 'A missed chance', brilliant: 'A brilliant move', great: 'A great find' }[m.c] || CLASSES[m.c].label;
-}
+const momentTitle = (m) => (m.type === 'theirs' ? (m.c === 'mistake' ? 'Their mistake' : 'Their blunder') : MOMENT[m.type].title);
+const momentChip = (m) => `<span class="sym" style="background:${MOMENT_COLOR[m.type]}">${MOMENT[m.type].icon}</span>`;
 
 function quality(cnt) {
   const good = (cnt.brilliant || 0) + (cnt.great || 0) + (cnt.best || 0) + (cnt.excellent || 0) + (cnt.good || 0) + (cnt.book || 0) + (cnt.forced || 0);
@@ -220,8 +212,11 @@ function drawGame() {
   const ph = { me: phaseAccuracy(R, x.col), op: phaseAccuracy(R, opp) };
   const cnt = { w: {}, b: {} };
   R.cl.forEach((c, i) => { const sd = i % 2 ? 'b' : 'w'; cnt[sd][c] = (cnt[sd][c] || 0) + 1; });
-  const km = keyMoments(R, x.col);
+  RV.fens = fensOf(R.san).fens;
+  const km = keyMoments(R, x.col, RV.fens);
   RV.km = km;
+  const nGood = km.filter((m) => MOMENT[m.type].good === true).length;
+  const nBad = km.filter((m) => MOMENT[m.type].good === false).length;
   RV.tab = RV.tab || 'coach';
   const player = (c) => {
     const me = c === x.col;
@@ -248,8 +243,8 @@ function drawGame() {
       <div class="rv2-side">
         <div class="tabs" id="rvTabs" role="tablist">${[['coach', 'Coach'], ['moves', 'Moves'], ['report', 'Report']].map(([k, t]) => `<button role="tab" data-tab="${k}" aria-selected="${RV.tab === k}">${t}</button>`).join('')}<span class="tab-ink"></span></div>
         <div class="tabpane" data-pane="coach" ${RV.tab === 'coach' ? '' : 'hidden'}>
-          ${km.length ? `<div class="km"><div class="km-head"><div><span class="eyebrow">Key moments</span><b id="kmLabel">${pl(km.length, 'moment')} decided this game</b></div><div class="km-nav"><button class="btn icon" id="kmPrev" title="Previous key moment (P)">◀</button><button class="btn cta sm" id="kmNext" title="Next key moment (N)">Next moment <span class="arrow">→</span></button></div></div>
-            <div class="moment-row">${km.map((m, k) => `<button class="moment ${m.mine ? 'mine' : 'theirs'}" data-p="${m.i + 1}" data-k="${k}">${chip(m.c)}<span>${moveLabel(m.i)}${esc(R.san[m.i])}</span></button>`).join('')}</div></div>` : '<div class="km"><b>A clean game.</b> <span class="note">No big swings for you here.</span></div>'}
+          ${km.length ? `<div class="km"><div class="km-head"><div><span class="eyebrow">Key moments</span><b id="kmLabel">${pl(km.length, 'highlight')}${nGood || nBad ? ` <small class="km-sum">${nGood ? `<span class="good">${nGood} to celebrate</span>` : ''}${nGood && nBad ? ' · ' : ''}${nBad ? `<span class="bad">${nBad} to learn from</span>` : ''}</small>` : ''}</b></div><div class="km-nav"><button class="btn icon" id="kmPrev" title="Previous key moment (P)">◀</button><button class="btn cta sm" id="kmNext" title="Next key moment (N)">Next moment <span class="arrow">→</span></button></div></div>
+            <div class="moment-row">${km.map((m, k) => `<button class="moment ${m.mine ? 'mine' : 'theirs'} ${MOMENT[m.type].good ? 'good' : ''}" data-p="${m.i + 1}" data-k="${k}" title="${esc(momentTitle(m))}">${momentChip(m)}<span>${moveLabel(m.i)}${esc(R.san[m.i])}<small>${esc(momentTitle(m))}</small></span></button>`).join('')}</div></div>` : '<div class="km"><b>A clean game.</b> <span class="note">No big swings for you here.</span></div>'}
           <div id="rvc"></div>
         </div>
         <div class="tabpane" data-pane="moves" ${RV.tab === 'moves' ? '' : 'hidden'}><div class="mvt" id="rvm"></div></div>
@@ -385,23 +380,35 @@ function drawBoard(animate = true) {
   $('#rvdot').setAttribute('cx', cx);
   $('#rvdot').setAttribute('cy', 120 * (1 - R.ev[p].w / 100));
   let html;
+  RV.cheerKey = null;
   const mine = i >= 0 && (i % 2 === 0) === (x.col === 'w');
   if (retry) html = `<div class="comment try"><h3>Find a better move</h3><p>${esc(RV.msg || 'Your move: tap a piece, then its square.')}</p></div>`;
-  else if (i < 0) html = `<div class="comment intro"><h3>How to review this game</h3><ol><li>Press <b>Next moment</b> to jump to the moves that decided the game.</li><li>At each one, read why it mattered, then try <b>Find a better move</b>.</li><li>Move any piece to explore other ideas; arrows show the engine's suggestions.</li></ol><p class="note">Keys: ← → step · N / P next or previous moment · Space plays the game.</p></div>`;
+  else if (i < 0) {
+    const st = gameStory(R, RV.fens, x.col, { result: x.sc === 1 ? 'win' : x.sc === 0.5 ? 'draw' : 'loss', opp: x.opp, opening: x.fam });
+    html = `<div class="comment intro"><span class="eyebrow">The story of this game</span><p class="story-text">${esc(st.text)}</p>
+      <div class="row"><button class="btn cta sm" id="rStart">Walk through the highlights <span class="arrow">→</span></button></div>
+      <details class="cm-more"><summary>How to use the review</summary><ol><li><b>Next moment</b> jumps to the moves that mattered, good and bad.</li><li>On a mistake, try <b>Find a better move</b>.</li><li>Move any piece to explore other ideas; arrows show the engine's suggestions.</li></ol><p class="note">Keys: ← → step · N / P next or previous moment · Space plays the game.</p></details></div>`;
+  }
   else {
     const q = reviewComment(R, i, x.fam);
+    const ex = explainMove(R, i, RV.fens, x.col, { opening: x.fam });
     const err = ERROR_CLASSES.includes(q.k);
     const ki = (RV.km || []).findIndex((m) => m.i === i);
     const km = ki >= 0 ? RV.km[ki] : null;
-    html = `<div class="comment ${err ? 'err' : ''}" style="--c:${CLASSES[q.k].color}">
-      ${km ? `<span class="eyebrow">Key moment ${ki + 1} of ${RV.km.length} · ${momentTitle(km)}</span>` : ''}
-      <div class="cm-head"><span class="cm-chip">${CLASSES[q.k].sym}</span><div><b>${esc(moveLabel(i) + R.san[i])} is ${q.k === 'book' ? 'a book move' : `${/^[aeiou]/i.test(CLASSES[q.k].label) ? 'an' : 'a'} ${CLASSES[q.k].label.toLowerCase()}`}</b><span>${mine ? 'Your move' : "Opponent's move"} · ${esc(HELP[q.k])}</span></div><span class="cm-eval" title="Evaluation from White's side: + means White is better">${esc(R.ev[p].t || '')}</span></div>
-      <p>${esc(q.text)}</p>
+    const cheer = ex.tone === 'cheer' && mine;
+    RV.cheerKey = cheer && ['brilliant', 'great', 'mate'].includes(km?.type) ? `${x.id}|${i}` : null;
+    html = `<div class="comment ${err ? 'err' : ''} ${cheer ? 'cheer' : ''}" style="--c:${CLASSES[q.k].color}">
+      ${km ? `<span class="eyebrow">Highlight ${ki + 1} of ${RV.km.length} · ${esc(momentTitle(km))}</span>` : ''}
+      <div class="cm-head"><span class="cm-chip">${CLASSES[q.k].sym}</span><div><b>${esc(moveLabel(i) + R.san[i])} · ${esc(ex.headline)}</b><span>${mine ? 'Your move' : "Opponent's move"} · ${esc(HELP[q.k])}</span></div><span class="cm-eval" title="Evaluation from White's side: + means White is better">${esc(R.ev[p].t || '')}</span></div>
+      <p class="cm-text">${ex.text.map(esc).join(' ')}</p>
       ${q.line ? `<details class="cm-more"><summary>Show the engine's line</summary><div class="cm-line"><span class="mono">${esc(q.line)}</span></div></details>` : ''}
       <div class="row">${q.line ? '<button class="btn sm" id="rShow">Play the better line</button>' : ''}${mine && err ? '<button class="btn sm cta" id="rRetry">Find a better move</button>' : ''}</div>
       <p class="note cm-tip">Tip: move any piece on the board to explore what would have happened.</p></div>`;
   }
   $('#rvc').innerHTML = html;
+  const st = $('#rStart');
+  if (st) st.onclick = () => RV.stepMoment?.(1);
+  if (RV.cheerKey && animate && RV.lastCheer !== RV.cheerKey) { RV.lastCheer = RV.cheerKey; confetti($('#rvc .comment')); }
   const sb = $('#rShow');
   if (sb) sb.onclick = () => showLine(i);
   const rr = $('#rRetry');
