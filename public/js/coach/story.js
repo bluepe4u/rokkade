@@ -536,7 +536,7 @@ async function finish(t) {
   flyToLibrary(s);
 }
 
-function confetti(host) {
+export function confetti(host) {
   if (!host || reducedMotion()) return;
   const box = document.createElement('div');
   box.className = 'confetti';

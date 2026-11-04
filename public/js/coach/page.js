@@ -403,6 +403,7 @@ const LIVE = {
   plan: () => renderGuide(),
   progress: () => renderProgress(view, C, { quiet: true }),
   time: () => renderTime(view, C, { quiet: true }),
+  training: () => { if (!parseHash().arg[0]) renderTraining(view, C); },
   puzzles: () => { if (!parseHash().arg[0] && !puzzleSessionActive()) renderPuzzles(view, C); },
   insights: () => renderInsights(view, C, S, { quiet: true }),
   review: () => { if (!parseHash().arg[0]) renderReview(view, C, S, [], { quiet: true }); },
@@ -432,20 +433,20 @@ function refreshLive(secs) {
     if (sec === 'discoveries' && $('#story').hidden) renderDiscoveries(true);
     refreshLive(['today', 'plan']);
   });
-  C.addEventListener('reviewed', () => { renderBg(); refreshLive(['review', 'insights', 'today', 'plan', 'progress', 'puzzles']); });
+  C.addEventListener('reviewed', () => { renderBg(); refreshLive(['review', 'insights', 'today', 'plan', 'progress', 'puzzles', 'training']); });
   C.addEventListener('practice', () => { paintDue(); refreshLive(['today']); });
   C.addEventListener('synced', (e) => {
     renderAccount();
     const { fresh, discoveries } = e.detail || {};
     if (fresh) toast(`${plural(fresh, 'new game')} from chess.com${discoveries ? ` · ${plural(discoveries, 'new position')} to study` : ''}`);
-    refreshLive(['today', 'games', 'review', 'insights', 'plan', 'puzzles', 'progress', 'time']);
+    refreshLive(['today', 'games', 'review', 'insights', 'plan', 'puzzles', 'progress', 'time', 'training']);
   });
   route();
   if (C.user) {
     try {
       await C.loadGames();
       await C.ingest(C.games);
-      refreshLive(['today', 'games', 'review', 'insights', 'plan', 'puzzles', 'progress', 'time']);
+      refreshLive(['today', 'games', 'review', 'insights', 'plan', 'puzzles', 'progress', 'time', 'training']);
     } catch (e) { console.warn(e); }
   }
   C.kick();
