@@ -1,61 +1,188 @@
 {
-  "k": 1.68,
-  "w": 0.2,
+  "k": 1.94,
+  "w": 0.15,
   "b": 0,
-  "depth": 12,
-  "n": 250,
-  "games": 125,
-  "date": "2026-11-03",
-  "mae": 4.66,
-  "maeDefault": 7.64,
-  "biasDefault": 4.69,
-  "bias": 1.17,
+  "depth": 18,
+  "n": 1200,
+  "maeHeldOut": 5.12,
+  "games": 600,
+  "date": "2026-11-09",
+  "mae": 4.98,
+  "maeDefault": 8.32,
+  "biasDefault": 5.31,
+  "bias": 1.44,
   "byBand": [
     {
       "band": "0-800",
-      "n": 51,
-      "chesscom": 61.81,
-      "ours": 66.58,
-      "fitted": 66.53,
-      "maeDefault": 9.08,
-      "maeFitted": 6.38
+      "n": 269,
+      "chesscom": 63.4,
+      "ours": 71.09,
+      "fitted": 70,
+      "maeDefault": 11.04,
+      "maeFitted": 8.35
     },
     {
       "band": "800-1200",
-      "n": 50,
-      "chesscom": 69.46,
-      "ours": 76.08,
-      "fitted": 71.7,
-      "maeDefault": 10.35,
-      "maeFitted": 5.12
+      "n": 223,
+      "chesscom": 72.78,
+      "ours": 77.43,
+      "fitted": 73.47,
+      "maeDefault": 8.21,
+      "maeFitted": 4.36
     },
     {
       "band": "1200-1600",
-      "n": 45,
-      "chesscom": 77.23,
-      "ours": 81.29,
-      "fitted": 77.35,
-      "maeDefault": 6.94,
-      "maeFitted": 4.3
+      "n": 219,
+      "chesscom": 73.96,
+      "ours": 79.2,
+      "fitted": 74.56,
+      "maeDefault": 8.87,
+      "maeFitted": 4.34
     },
     {
       "band": "1600-2000",
-      "n": 45,
-      "chesscom": 80.91,
-      "ours": 84.12,
-      "fitted": 79.82,
-      "maeDefault": 6.13,
-      "maeFitted": 3.48
+      "n": 213,
+      "chesscom": 78.51,
+      "ours": 83.78,
+      "fitted": 78.81,
+      "maeDefault": 7.71,
+      "maeFitted": 3.66
     },
     {
       "band": "2000-4000",
-      "n": 59,
-      "chesscom": 83.26,
-      "ours": 87.83,
-      "fitted": 83.01,
-      "maeDefault": 5.77,
-      "maeFitted": 3.95
+      "n": 276,
+      "chesscom": 82.29,
+      "ours": 85.89,
+      "fitted": 80.85,
+      "maeDefault": 5.8,
+      "maeFitted": 3.74
     }
   ],
-  "source": "Public chess.com games (blitz and rapid) sampled across rating bands; reviewed with Stockfish 19 lite."
+  "source": "Public chess.com games (blitz and rapid) sampled across rating bands; reviewed with Stockfish 19 lite.",
+  "byDepth": {
+    "14": {
+      "k": 1.96,
+      "w": 0.15,
+      "b": 0,
+      "depth": 14,
+      "n": 1200,
+      "maeHeldOut": 5.02,
+      "games": 600,
+      "date": "2026-11-09",
+      "mae": 4.92,
+      "maeDefault": 8.34,
+      "biasDefault": 5.78,
+      "bias": 1.09,
+      "byBand": [
+        {
+          "band": "0-800",
+          "n": 269,
+          "chesscom": 63.4,
+          "ours": 71.64,
+          "fitted": 69.56,
+          "maeDefault": 11.23,
+          "maeFitted": 8.01
+        },
+        {
+          "band": "800-1200",
+          "n": 223,
+          "chesscom": 72.78,
+          "ours": 78.12,
+          "fitted": 73.03,
+          "maeDefault": 8.11,
+          "maeFitted": 4.47
+        },
+        {
+          "band": "1200-1600",
+          "n": 219,
+          "chesscom": 73.96,
+          "ours": 79.63,
+          "fitted": 74.15,
+          "maeDefault": 8.86,
+          "maeFitted": 4.6
+        },
+        {
+          "band": "1600-2000",
+          "n": 213,
+          "chesscom": 78.51,
+          "ours": 84.09,
+          "fitted": 78.45,
+          "maeDefault": 7.55,
+          "maeFitted": 3.49
+        },
+        {
+          "band": "2000-4000",
+          "n": 276,
+          "chesscom": 82.29,
+          "ours": 86.26,
+          "fitted": 80.7,
+          "maeDefault": 5.88,
+          "maeFitted": 3.63
+        }
+      ],
+      "source": "Public chess.com games (blitz and rapid) sampled across rating bands; reviewed with Stockfish 19 lite."
+    },
+    "18": {
+      "k": 1.94,
+      "w": 0.15,
+      "b": 0,
+      "depth": 18,
+      "n": 1200,
+      "maeHeldOut": 5.12,
+      "games": 600,
+      "date": "2026-11-09",
+      "mae": 4.98,
+      "maeDefault": 8.32,
+      "biasDefault": 5.31,
+      "bias": 1.44,
+      "byBand": [
+        {
+          "band": "0-800",
+          "n": 269,
+          "chesscom": 63.4,
+          "ours": 71.09,
+          "fitted": 70,
+          "maeDefault": 11.04,
+          "maeFitted": 8.35
+        },
+        {
+          "band": "800-1200",
+          "n": 223,
+          "chesscom": 72.78,
+          "ours": 77.43,
+          "fitted": 73.47,
+          "maeDefault": 8.21,
+          "maeFitted": 4.36
+        },
+        {
+          "band": "1200-1600",
+          "n": 219,
+          "chesscom": 73.96,
+          "ours": 79.2,
+          "fitted": 74.56,
+          "maeDefault": 8.87,
+          "maeFitted": 4.34
+        },
+        {
+          "band": "1600-2000",
+          "n": 213,
+          "chesscom": 78.51,
+          "ours": 83.78,
+          "fitted": 78.81,
+          "maeDefault": 7.71,
+          "maeFitted": 3.66
+        },
+        {
+          "band": "2000-4000",
+          "n": 276,
+          "chesscom": 82.29,
+          "ours": 85.89,
+          "fitted": 80.85,
+          "maeDefault": 5.8,
+          "maeFitted": 3.74
+        }
+      ],
+      "source": "Public chess.com games (blitz and rapid) sampled across rating bands; reviewed with Stockfish 19 lite."
+    }
+  }
 }
