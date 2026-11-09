@@ -43,7 +43,7 @@
 Ordered by how much they'd help someone improve.
 
 1. **Calibrated accuracy and move classes.** Our accuracy formula and class thresholds are close to Lichess's but not tuned against chess.com's. Checking against the games' own `accuracies` field and fitting the curve would make the numbers comparable to what users see on chess.com.
-2. **Review depth.** Background reviews run at depth 12 for throughput. A second pass at depth 16 for recent and important games (losses, close games) would make "best move" claims more reliable, especially in sharp tactics.
+2. **Review depth.** Done: first reviews run at depth 14 and a second background pass re-reviews recent and important games (losses, draws) at depth 18. Accuracy uses parameters fitted at the depth the game was reviewed at.
 3. **Opening explorer with real statistics.** The library is a fixed repertoire tree. Adding Lichess masters/club statistics per position (move popularity and results) would show which replies opponents actually play most and which lines score well at the user's level.
 4. **Endgame and calculation training.** Puzzles only come from your own games, so endgame technique (basic positions such as Lucena, Philidor, opposition) and visualisation have no dedicated drills yet.
 5. **Time management analysis.** Clock data from PGNs is parsed but only used for "blunders under a minute". Showing time spent per move, time trouble by phase, and correlating thinking time with move quality would target a very common weakness.
