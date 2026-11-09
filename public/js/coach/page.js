@@ -16,7 +16,7 @@ import { moveLabel, sanLine, positionAfter } from './library.js';
 import { filterGames, agg, fit, recommendations, groupBy, pct, signed, plural } from './games.js';
 import { insightStats } from './analysis.js';
 import { ls, store } from './store.js';
-import { renderLibrary } from './trainer.js';
+import { renderLibrary, refreshLibrary } from './trainer.js';
 import { renderReview, renderInsights, interactiveQueue } from './review.js';
 import { openStory } from './story.js';
 import { buildGuide } from './guide.js';
@@ -414,6 +414,7 @@ const LIVE = {
   games: () => renderGames(),
   plan: () => renderGuide(),
   progress: () => renderProgress(view, C, { quiet: true }),
+  library: () => refreshLibrary(),
   time: () => renderTime(view, C, { quiet: true }),
   training: () => { if (!parseHash().arg[0]) renderTraining(view, C); },
   puzzles: () => { if (!parseHash().arg[0] && !puzzleSessionActive()) renderPuzzles(view, C); },
@@ -447,20 +448,20 @@ function refreshLive(secs) {
     refreshLive(['today', 'plan']);
   });
   C.addEventListener('reviewed', () => { renderBg(); refreshLive(['review', 'insights', 'today', 'plan', 'progress', 'puzzles', 'training', 'journal']); });
-  C.addEventListener('practice', () => { paintDue(); refreshLive(['today', 'plan', 'journal']); });
+  C.addEventListener('practice', () => { paintDue(); refreshLive(['today', 'plan', 'journal', 'library']); });
   C.addEventListener('journal', () => { paintDue(); refreshLive(['today', 'plan']); });
   C.addEventListener('synced', (e) => {
     renderAccount();
     const { fresh, discoveries } = e.detail || {};
     if (fresh) toast(`${plural(fresh, 'new game')} from chess.com${discoveries ? ` · ${plural(discoveries, 'new position')} to study` : ''}`);
-    refreshLive(['today', 'games', 'review', 'journal', 'insights', 'plan', 'puzzles', 'progress', 'time', 'training']);
+    refreshLive(['today', 'games', 'review', 'journal', 'insights', 'plan', 'puzzles', 'progress', 'time', 'training', 'library']);
   });
   route();
   if (C.user) {
     try {
       await C.loadGames();
       await C.ingest(C.games);
-      refreshLive(['today', 'games', 'review', 'journal', 'insights', 'plan', 'puzzles', 'progress', 'time', 'training']);
+      refreshLive(['today', 'games', 'review', 'journal', 'insights', 'plan', 'puzzles', 'progress', 'time', 'training', 'library']);
     } catch (e) { console.warn(e); }
   }
   C.kick();

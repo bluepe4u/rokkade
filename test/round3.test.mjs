@@ -79,7 +79,8 @@ test('goals project from the trend; the week summary compares with last week', (
   reviewLine(prog, 'pz|x', true);
   const pz = goalProgress({ type: 'puzzles', target: 10, start: { v: 0 } }, { games, prog, now });
   assert.equal(pz.current, 1);
-  const w = weekSummary({ games, prog });
+  // A game from a minute ago, so "this week" has one whatever weekday the test runs on.
+  const w = weekSummary({ games: [...games, { id: 'today', tc: 'blitz', myR: 1350, t: now - 60, sc: 1, col: 'w', sans: [] }], prog });
   assert.equal(w.now.practice.drill, 1);
   assert.ok(w.now.games >= 1 && w.prev.games >= 1);
 });

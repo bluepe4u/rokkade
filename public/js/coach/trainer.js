@@ -5,6 +5,8 @@ import { $, $$, esc, miniBoard, stagger, toast } from './ui.js';
 import { moveLabel, sanLine, positionAfter } from './library.js';
 import { ls } from './store.js';
 import { renderExplorerPanel } from './lichessview.js';
+import { loadOpenings, openingsReady, openingOfKeys, openingOf, nameAtKey } from './openings.js';
+import { dayKey } from './progress.js';
 
 const T = {
   side: ls.get('rep-side', 'w'),
@@ -20,6 +22,8 @@ const T = {
   busy: false,
   tk: 0,
   open: {},
+  q: '',
+  filter: 'all',
   target: null, // SAN list of the line being drilled (due-line sessions)
   queue: [], // due lines still to drill in this session
   session: null, // {total, clean}
@@ -162,8 +166,11 @@ function nextDue() {
   renderInto();
 }
 
-function startDue() {
-  T.queue = C.due();
+function startDue() { startQueue(C.due()); }
+
+/** Drill a list of lines [{side, line}] one after another. */
+function startQueue(items) {
+  T.queue = items.slice();
   T.session = { total: T.queue.length, done: 0, clean: 0 };
   nextDue();
 }
@@ -226,6 +233,8 @@ function draw(animate = true) {
   });
   board.setArrows(drill ? [] : n.e.map((e) => ({ from: e.a, to: e.b, color: e.w ? '#b4533a' : mine() ? '#3f7a52' : '#2f6fb3', opacity: mine() ? 0.85 : 0.5, width: 13 })));
   $$('#tMode button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === T.mode)));
+  const on = openingOfKeys(T.path.map((i) => db().n[i].k));
+  $('#tName').innerHTML = on ? `<span class="eco">${esc(on.eco)}</span><span><b>${esc(on.family)}</b>${on.variation ? `<small>${esc(on.variation)}</small>` : ''}</span>` : `<span><b>${T.mv.length ? 'Unnamed position' : 'Starting position'}</b></span>`;
   const st = $('#tStatus');
   st.textContent = T.msg;
   st.className = `status-line ${T.cls}`;
@@ -242,7 +251,7 @@ function draw(animate = true) {
   $('#c3').textContent = drill ? 'Hint' : 'Flip';
   let ch = '';
   if (!drill && n.e.length) {
-    ch = `<p class="eyebrow" style="margin:14px 0 6px">${mine() ? 'Your move' : 'Replies your library covers'}</p><div class="choices">${n.e.map((e, i) => `<button class="choice ${e.w ? 'avoid' : ''}" data-e="${i}">${moveLabel(T.mv.length)}${esc(e.s)}<small>${e.w ? 'avoid · a trap' : e.c > 1 ? `${e.c} lines` : '1 line'}</small></button>`).join('')}</div>`;
+    ch = `<p class="eyebrow" style="margin:14px 0 6px">${mine() ? 'Your move' : 'Replies your library covers'}</p><div class="choices">${n.e.map((e, i) => `<button class="choice ${e.w ? 'avoid' : ''}" data-e="${i}">${moveLabel(T.mv.length)}${esc(e.s)}<small>${e.w ? 'avoid · a trap' : (() => { const nm = nameAtKey(db().n[e.n].k); return nm && nm.name !== on?.name ? esc(nm.variation || nm.family) : e.c > 1 ? `${e.c} lines` : '1 line'; })()}</small></button>`).join('')}</div>`;
   }
   $('#tChoices').innerHTML = ch;
   $$('#tChoices [data-e]').forEach((b) => { b.onclick = () => apply(n.e[+b.dataset.e]); });
@@ -252,7 +261,7 @@ function draw(animate = true) {
   let html = '';
   const one = lines.length ? lines : T.mv.length && n.p.length === 1 ? [{ i: n.p[0], l: d.l[n.p[0]] }] : [];
   if (one.length && !(drill && C.lib.book(T.side, T.path.at(-1)).length)) {
-    html = one.map(({ i, l }) => `<div class="line-info ${l.w ? 'warn' : ''}"><b>${esc(l.t)}</b>${l.custom ? '<span class="new-tag">From your games</span>' : ''}<small>${esc(l.c)}</small><p style="margin:0">${esc(l.p)}</p>${l.custom ? `<button class="btn sm" style="margin-top:10px" data-rm="${i}">Remove this line</button>` : ''}</div>`).join('');
+    html = one.map(({ i, l }) => `<div class="line-info ${l.w ? 'warn' : ''}"><b>${esc((() => { const on2 = openingOfKeys(l.path.map((k) => d.n[k].k)); return on2 ? on2.name : l.t; })())}</b>${l.custom ? '<span class="new-tag">From your games</span>' : ''}<small>${esc(l.t)} · ${esc(l.c)}</small><p style="margin:0">${esc(l.p)}</p>${l.custom ? `<button class="btn sm" style="margin-top:10px" data-rm="${i}">Remove this line</button>` : ''}</div>`).join('');
   } else if (T.mv.length && !drill) {
     const cs = [...new Set(n.p.map((i) => d.l[i].c))];
     html = `<div class="line-info"><b>${n.p.length} lines from here</b><p style="margin:4px 0 0">${esc(cs.slice(0, 4).join(' · '))}${cs.length > 4 ? ' and more' : ''}</p></div>`;
@@ -278,32 +287,151 @@ function draw(animate = true) {
   });
 }
 
+// ───────────────────────── the repertoire, by opening ─────────────────────────
+const lineKeyOf = (side, san) => `${side}|${san.join(' ')}`;
+
+/** Status of a line in spaced repetition: new, due, learning or learned (with days to the next review). */
+function lineStatus(side, l) {
+  const e = C.prog.srs[lineKeyOf(side, l.san)];
+  const today = dayKey();
+  if (!e) return { k: 'new', label: 'New' };
+  if (e.due <= today) return { k: 'due', label: 'Due today' };
+  const days = Math.round((new Date(`${e.due}T12:00:00`) - new Date(`${today}T12:00:00`)) / 864e5);
+  return e.iv >= 7 ? { k: 'learned', label: `Learned · next in ${days} d` } : { k: 'learning', label: `Learning · next in ${days} d` };
+}
+
+let gamesCache = null;
+/** Your games with this side, by opening family: {family: {n, score}}. */
+function gamesByFamily(side) {
+  const key = `${side}|${C.games.length}`;
+  if (gamesCache?.key === key) return gamesCache.map;
+  const map = {};
+  for (const x of C.games) {
+    if (x.col !== side) continue;
+    const o = openingOf(x.sans, 30);
+    if (!o) continue;
+    const sub = o.variation.split(',')[0].trim();
+    for (const k of sub ? [o.family, `${o.family}: ${sub}`] : [o.family]) {
+      const m = (map[k] ||= { n: 0, sum: 0 });
+      m.n++;
+      m.sum += x.sc;
+    }
+  }
+  for (const v of Object.values(map)) v.score = v.sum / v.n;
+  if (openingsReady()) gamesCache = { key, map };
+  return map;
+}
+
+/** Lines of the current side grouped by opening family, most lines first. */
+function families() {
+  const d = db();
+  const fam = new Map();
+  d.l.forEach((l, i) => {
+    if (l.w) return;
+    const o = openingOfKeys(l.path.map((n) => d.n[n].k)) || { family: l.c, variation: '', eco: '', name: l.c, ply: Math.min(4, l.san.length) };
+    let f = fam.get(o.family);
+    if (!f) { f = { name: o.family, family: o.family, ecos: new Set(), lines: [], ply: o.ply, san: l.san.slice(0, o.ply) }; fam.set(o.family, f); }
+    if (o.eco) f.ecos.add(o.eco);
+    if (o.ply < f.ply) { f.ply = o.ply; f.san = l.san.slice(0, o.ply); }
+    f.lines.push({ i, l, o, st: lineStatus(T.side, l) });
+  });
+  // Big families split by their main variation ("Italian Game: Two Knights Defense").
+  for (const [name, f] of [...fam]) {
+    if (f.lines.length <= 8) continue;
+    fam.delete(name);
+    for (const x of f.lines) {
+      const sub = (x.o.variation || '').split(',')[0].trim();
+      const nm = sub ? `${name}: ${sub}` : name;
+      let g = fam.get(nm);
+      if (!g) { g = { name: nm, family: name, sub, ecos: new Set(), lines: [], ply: x.o.ply, san: x.l.san.slice(0, x.o.ply) }; fam.set(nm, g); }
+      if (x.o.eco) g.ecos.add(x.o.eco);
+      g.lines.push(x);
+    }
+  }
+  // The family's board: where its name first appears (shortest path to it).
+  for (const f of fam.values()) {
+    const hit = (nm) => nm && nm.family === f.family && (!f.sub || nm.variation.startsWith(f.sub));
+    const first = f.lines.map(({ l }) => ({ k: l.path.findIndex((n) => hit(nameAtKey(d.n[n].k))), san: l.san })).filter((x) => x.k > 0).sort((a, b) => a.k - b.k)[0];
+    if (first) f.san = first.san.slice(0, first.k);
+    f.lines.sort((a, b) => (a.o.variation || '').localeCompare(b.o.variation || '') || a.l.san.length - b.l.san.length);
+  }
+  return [...fam.values()].sort((a, b) => b.lines.length - a.lines.length);
+}
+
+const STATUS_ORDER = { due: 0, new: 1, learning: 2, learned: 3 };
+
 function browse() {
   const el = $('#tBrowse');
   if (!el) return;
   const d = db();
-  const added = d.l.map((l, i) => ({ l, i })).filter(({ l }) => l.custom).sort((a, b) => (b.l.date || 0) - (a.l.date || 0));
-  const total = d.l.filter((l) => !l.w).length;
-  const drilled = d.l.filter((l, i) => !l.w && done[T.side + i]).length;
-  el.innerHTML = `<div class="row" style="margin-top:28px"><h2 class="h2" style="margin:0">All lines</h2><span class="note">${drilled}/${total} drilled clean</span></div>
-    ${added.length ? `<p class="eyebrow group-title">Added from your games</p><div class="shelf">${added.slice(0, 12).map(({ l, i }) => `<button data-l="${i}" class="rise">${miniBoard(positionAfter(l.san).fen, T.side)}<span><b>${esc(l.t)}</b><small>${l.from === 'discovery' ? 'Studied discovery' : 'Your line'}${done[T.side + i] ? ' · ✓ drilled' : ''}</small></span></button>`).join('')}</div>` : ''}
-    ${d.ch.map((g) => `<p class="eyebrow group-title">${esc(g.t)}</p><div class="chapters">${g.c.map((c) => {
-      const dn = c.l.filter((i) => done[T.side + i]).length;
-      return `<details class="chapter" data-c="${c.id}" ${T.open[c.id] ? 'open' : ''}><summary>${esc(c.t)}<span class="count">${dn ? `${dn}/` : ''}${c.l.length}</span></summary><div class="lines-list">${c.l.map((i) => `<button class="jump" data-l="${i}">${esc(d.l[i].t)}${d.l[i].custom ? '<span class="new-tag">New</span>' : ''}${done[T.side + i] ? '<span class="tick">✓</span>' : ''}</button>`).join('')}</div></details>`;
-    }).join('')}</div>`).join('')}`;
-  stagger(el);
+  const fams = families();
+  const games = gamesByFamily(T.side);
+  const q = T.q.trim().toLowerCase();
+  const match = (f, x) => (!q || f.name.toLowerCase().includes(q) || (x.o.name || '').toLowerCase().includes(q) || x.l.t.toLowerCase().includes(q) || x.l.san.join(' ').toLowerCase().includes(q))
+    && (T.filter === 'all' || x.st.k === T.filter || (T.filter === 'learned' && x.st.k === 'learning'));
+  const all = fams.flatMap((f) => f.lines);
+  const n = (k) => all.filter((x) => x.st.k === k).length;
+  const cards = fams.map((f) => ({ f, shown: f.lines.filter((x) => match(f, x)) })).filter((c) => c.shown.length);
+  // Openings you play often but score badly in: the most useful place to drill.
+  const weak = fams.map((f) => ({ f, g: games[f.name] })).filter(({ g }) => g && g.n >= 5 && g.score < 0.45).sort((a, b) => a.g.score - b.g.score).slice(0, 3);
+  const ecoText = (f) => { const e = [...f.ecos].sort(); return e.length ? (e.length > 1 ? `${e[0]}–${e.at(-1)}` : e[0]) : ''; };
+  el.innerHTML = `
+    <div class="lib-head"><div><h2 class="h2" style="margin:0">Your repertoire</h2><p class="note" style="margin:2px 0 0">${all.length} lines in ${fams.length} openings · ${n('learned') + n('learning')} learned · ${n('due')} due · ${n('new')} new</p></div>
+      <span class="spacer"></span>
+      <input class="input search" id="libQ" type="search" placeholder="Search openings or moves" value="${esc(T.q)}" aria-label="Search openings">
+      <div class="seg" id="libF">${[['all', 'All'], ['due', 'Due'], ['new', 'New'], ['learned', 'Learned']].map(([k, t]) => `<button data-v="${k}" aria-pressed="${T.filter === k}">${t}</button>`).join('')}</div></div>
+    ${weak.length && !q && T.filter === 'all' ? `<div class="lib-weak rise"><span class="eyebrow">Worth your time</span>${weak.map(({ f, g }) => `<button data-fam="${esc(f.name)}" class="weak-chip"><b>${esc(f.name)}</b><small>${g.n} games · you score ${Math.round(g.score * 100)}%</small></button>`).join('')}</div>` : ''}
+    <div class="op-grid">${cards.map(({ f, shown }) => {
+      const learned = f.lines.filter((x) => x.st.k === 'learned' || x.st.k === 'learning').length;
+      const due = f.lines.filter((x) => x.st.k === 'due').length;
+      const g = games[f.name];
+      const open = T.open[f.name] || !!q;
+      return `<article class="op-card rise" data-fam="${esc(f.name)}">
+        <div class="op-top">
+          <button class="op-board" data-explore="${esc(f.name)}" title="Explore from here">${miniBoard(positionAfter(f.san).fen, T.side)}</button>
+          <div class="op-meta"><span class="eco">${esc(ecoText(f))}</span><h3>${esc(f.name)}</h3>
+            <p class="op-moves mono">${esc(sanLine(f.san))}</p>
+            <div class="op-bar" title="${learned} of ${f.lines.length} lines learned"><i style="width:${(100 * learned) / f.lines.length}%"></i></div>
+            <p class="op-stats"><span>${learned}/${f.lines.length} learned</span>${due ? `<span class="due">${due} due</span>` : ''}${g ? `<span class="${g.score >= 0.55 ? 'good' : g.score < 0.45 ? 'bad' : ''}">${g.n} ${g.n === 1 ? 'game' : 'games'} · ${Math.round(g.score * 100)}%</span>` : ''}</p>
+          </div>
+        </div>
+        <div class="op-actions"><button class="btn cta sm" data-drill="${esc(f.name)}">${due ? `Drill ${due} due` : 'Drill'} <span class="arrow">→</span></button><button class="btn sm ghost" data-toggle="${esc(f.name)}" aria-expanded="${open}">${open ? 'Hide' : 'Show'} ${shown.length} ${shown.length === 1 ? 'line' : 'lines'}</button></div>
+        <ul class="op-lines" ${open ? '' : 'hidden'}>${shown.sort((a, b) => STATUS_ORDER[a.st.k] - STATUS_ORDER[b.st.k]).map((x) => `<li><button data-l="${x.i}">
+          <span class="ol-name"><b>${esc((f.sub && x.o.variation ? x.o.variation.slice(f.sub.length).replace(/^,\s*/, '') : x.o.variation) || (f.sub ? 'Main line' : x.o.name) || x.l.t)}</b>${x.l.custom ? '<span class="new-tag">From your games</span>' : ''}<small>${esc(x.l.t)}${x.o.eco ? ` · ${esc(x.o.eco)}` : ''}</small></span>
+          <span class="ol-moves mono">${esc(sanLine(x.l.san.slice(-4), x.l.san.length - 4))}</span>
+          <span class="pill st-${x.st.k}">${esc(x.st.label)}</span></button></li>`).join('')}</ul>
+      </article>`;
+    }).join('') || '<p class="note">No lines match.</p>'}</div>`;
+  stagger(el, 30);
+  const qi = $('#libQ', el);
+  qi.oninput = () => { T.q = qi.value; const pos = qi.selectionStart; browse(); const n2 = $('#libQ'); n2.focus(); n2.setSelectionRange(pos, pos); };
+  $('#libF', el).onclick = (e) => { const v = e.target.closest('button')?.dataset.v; if (v) { T.filter = v; browse(); } };
+  const famBy = (name) => fams.find((f) => f.name === name);
+  $$('[data-toggle]', el).forEach((b) => { b.onclick = () => { T.open[b.dataset.toggle] = !T.open[b.dataset.toggle]; browse(); }; });
+  $$('[data-explore]', el).forEach((b) => { b.onclick = () => { const f = famBy(b.dataset.explore); setModeExplore(); openPath(f.san); draw(); scrollTo({ top: 0, behavior: 'smooth' }); }; });
+  $$('[data-fam].weak-chip', el).forEach((b) => { b.onclick = () => { T.open[b.dataset.fam] = true; browse(); $(`.op-card[data-fam="${CSS.escape(b.dataset.fam)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }; });
+  $$('[data-drill]', el).forEach((b) => {
+    b.onclick = () => {
+      const f = famBy(b.dataset.drill);
+      const items = f.lines.slice().sort((a, c) => STATUS_ORDER[a.st.k] - STATUS_ORDER[c.st.k]);
+      const due = items.filter((x) => x.st.k === 'due' || x.st.k === 'new');
+      startQueue((due.length ? due : items).slice(0, 8).map((x) => ({ side: T.side, line: x.l })));
+      scrollTo({ top: 0, behavior: 'smooth' });
+    };
+  });
   $$('[data-l]', el).forEach((b) => {
     b.onclick = () => {
       const l = d.l[+b.dataset.l];
+      setModeExplore();
       openPath(l.san.slice(0, l.st));
       draw(false);
       // Glide through the rest of the line so it reads as a story.
       (async () => {
         const tk = T.tk;
-        for (const s of l.san.slice(l.st)) {
+        for (const s2 of l.san.slice(l.st)) {
           await sleep(420);
           if (tk !== T.tk || !root.isConnected) return;
-          const e = node().e.find((q) => q.s === s);
+          const e = node().e.find((q2) => q2.s === s2);
           if (!e) break;
           apply(e);
         }
@@ -311,8 +439,9 @@ function browse() {
       scrollTo({ top: 0, behavior: 'smooth' });
     };
   });
-  $$('details', el).forEach((x) => { x.ontoggle = () => { T.open[x.dataset.c] = x.open; }; });
 }
+
+function setModeExplore() { T.session = null; T.queue = []; T.target = null; T.mode = 'explore'; T.tk++; T.busy = false; }
 
 function renderInto() {
   const st = C.lib.stats(T.side);
@@ -325,6 +454,7 @@ function renderInto() {
         <div class="board-ctl"><button class="btn icon" id="c0" title="Back to start"></button><button class="btn icon" id="c1" title="Back (←)">◀</button><button class="btn icon" id="c2" title="Forward (→)">▶</button><button class="btn" id="c3"></button></div></div>
       <div class="panel-card">
         <div class="seg" id="tMode"><button data-v="explore">Explore</button><button data-v="drill">Drill</button></div>
+        <div class="op-now" id="tName"></div>
         <p class="status-line" id="tStatus"></p>
         <div class="crumbs" id="tCrumbs"></div>
         <div id="tChoices"></div>
@@ -371,6 +501,7 @@ function dueBanner() {
 export function renderLibrary(view, coach, args = []) {
   C = coach;
   root = view;
+  if (!openingsReady()) loadOpenings().then(() => { if (root?.isConnected) { draw(false); browse(); } });
   if (args[0] === 'due') { renderInto(); startDue(); return; }
   if (args[0] === 'w' || args[0] === 'b') {
     T.side = args[0];
@@ -385,5 +516,8 @@ export function renderLibrary(view, coach, args = []) {
     if (el) el.classList.add('flash');
   }
 }
+
+/** Re-draw the repertoire list (new games, new reviews) without touching the board. */
+export function refreshLibrary() { if (root?.isConnected) browse(); }
 
 export { sanLine };

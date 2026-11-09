@@ -208,7 +208,7 @@ function drawGame() {
   const how = RESULT_TEXT[(x.sc === 1 ? opP : meP)?.result] || '';
   const cc = g.accuracies;
   const ccOf = (c) => cc?.[c === 'w' ? 'white' : 'black'];
-  const acc = (c) => RV.C.accFromLosses(R.loss, c);
+  const acc = (c) => RV.C.accFromLosses(R.loss, c, R.d);
   const ph = { me: phaseAccuracy(R, x.col), op: phaseAccuracy(R, opp) };
   const cnt = { w: {}, b: {} };
   R.cl.forEach((c, i) => { const sd = i % 2 ? 'b' : 'w'; cnt[sd][c] = (cnt[sd][c] || 0) + 1; });
@@ -257,7 +257,7 @@ function drawGame() {
             const mx = Math.max(1, ...Object.values(cnt.w), ...Object.values(cnt.b));
             return `<div class="mr" title="${esc(HELP[k])}"><span class="mr-v">${a}</span><span class="mr-l"><i data-w="${(100 * a) / mx}" style="background:${CLASSES[k].color}"></i></span><span class="mr-k">${chip(k)}${CLASSES[k].label}</span><span class="mr-r"><i data-w="${(100 * b) / mx}" style="background:${CLASSES[k].color}"></i></span><span class="mr-v">${b}</span></div>`;
           }).join('')}</div><div class="legend" style="margin-top:8px;justify-content:space-between"><span>You</span><span>Opponent</span></div></div>
-          <p class="note">Accuracy uses Rokade's formula${RV.C.accParams?.games ? `, fitted to chess.com's on ${RV.C.accParams.games} public games` : ''}${RV.C.cal ? ` and adjusted on ${RV.C.cal.n} of your own results` : ''}. Reviewed at depth ${R.d}.</p>
+          <p class="note">Accuracy uses Rokade's formula${RV.C.accParams?.games ? `, fitted to chess.com's on ${RV.C.paramsFor(R.d).games ?? RV.C.accParams.games} public games` : ''}${RV.C.cal ? ` and adjusted on ${RV.C.cal.n} of your own results` : ''}. Reviewed at depth ${R.d}.</p>
         </div>
       </div>
     </div>`;

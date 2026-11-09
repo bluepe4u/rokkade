@@ -5,14 +5,15 @@ Players are sampled from public country member lists (a spread of all ratings, u
 leaderboards), and each player's latest month of games is read. Games are bucketed by the two
 players' average rating so every band gets the same number.
 
-Usage: python tools/fetch_accuracy_sample.py OUT.json [--per-band 25] [--seed 7]
+Usage: python tools/fetch_accuracy_sample.py OUT.json [--per-band 120] [--seed 7]
 Then:  node tools/calibrate-accuracy.mjs OUT.json
 """
 import argparse, json, random, sys, time, urllib.request
 
 UA = "rokade-accuracy-calibration/1.0 (offline research tool)"
 API = "https://api.chess.com/pub"
-COUNTRIES = ["IS", "EE", "LU", "MT", "CY", "SI", "LV", "LT", "IE", "NZ", "FI", "NO", "DK", "HR", "UY"]
+COUNTRIES = ["IS", "EE", "LU", "MT", "CY", "SI", "LV", "LT", "IE", "NZ", "FI", "NO", "DK", "HR", "UY",
+             "PT", "CZ", "SK", "BG", "RS", "CL", "PE", "GR", "AT", "BE", "SE", "PL", "RO", "HU", "CO"]
 BANDS = [(0, 800), (800, 1200), (1200, 1600), (1600, 2000), (2000, 3500)]
 
 
@@ -37,9 +38,12 @@ def get(url):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("out")
-    ap.add_argument("--per-band", type=int, default=25)
+    ap.add_argument("--per-band", type=int, default=120)
     ap.add_argument("--seed", type=int, default=7)
-    ap.add_argument("--max-players", type=int, default=600)
+    ap.add_argument("--max-players", type=int, default=5000)
+    ap.add_argument("--per-country", type=int, default=150)
+    ap.add_argument("--per-titled", type=int, default=150)
+    ap.add_argument("--per-player", type=int, default=2)
     a = ap.parse_args()
     rnd = random.Random(a.seed)
     names = []
@@ -47,7 +51,7 @@ def main():
         d = get(f"{API}/country/{c}/players") or {}
         ps = d.get("players", [])
         rnd.shuffle(ps)
-        names += ps[:80]
+        names += ps[:a.per_country]
         time.sleep(0.3)
     # Titled players (and their opponents) fill the higher bands, which country lists rarely reach.
     titled = []
@@ -55,7 +59,7 @@ def main():
         d = get(f"{API}/titled/{t}") or {}
         ps = d.get("players", [])
         rnd.shuffle(ps)
-        titled += ps[:60]
+        titled += ps[:a.per_titled]
         time.sleep(0.3)
     rnd.shuffle(names)
     rnd.shuffle(titled)
@@ -80,8 +84,8 @@ def main():
         time.sleep(0.25)
         taken = 0
         for g in games:
-            if taken >= 2:
-                break  # at most two games per player, to spread the sample
+            if taken >= a.per_player:
+                break  # a few games per player at most, to spread the sample
             if g.get("rules") != "chess" or g.get("time_class") not in ("blitz", "rapid"):
                 continue
             acc = g.get("accuracies") or {}

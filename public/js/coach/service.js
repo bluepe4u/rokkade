@@ -21,9 +21,9 @@ const TAB = Math.random().toString(36).slice(2);
 /** Analysis depths; ?depth=N (or localStorage sfet.coach.depth) lowers them for quick tests. */
 function depthConfig() {
   let d = Number(new URLSearchParams(location.search).get('depth')) || Number(ls.get('sfet.coach.depth', 0));
-  if (!d) return { ...DEPTH, review: 12, deep: 16 };
+  if (!d) return { ...DEPTH, review: 14, deep: 18 };
   d = Math.max(4, Math.min(DEPTH.main, d));
-  return { main: d, mainTime: 8000, reply: Math.max(4, d - 2), replyTime: 4000, idea: Math.max(4, d - 4), ideaTime: 1500, review: Math.min(12, d), deep: Math.min(16, d + 2) };
+  return { main: d, mainTime: 8000, reply: Math.max(4, d - 2), replyTime: 4000, idea: Math.max(4, d - 4), ideaTime: 1500, review: Math.min(14, d), deep: Math.min(18, d + 2) };
 }
 
 export const readyCount = () => Number(ls.get(BADGE, 0)) || 0;
@@ -405,7 +405,7 @@ class CoachService extends EventTarget {
   baseAcc(id, side) {
     const r = this.reviewIdx[id];
     if (!r) return null;
-    return r.l ? paramAccuracy(r.l, side, this.accParams || DEFAULT_PARAMS) : r[side];
+    return r.l ? paramAccuracy(r.l, side, this.paramsFor(r.d)) : r[side];
   }
 
   /** Your personal adjustment toward chess.com's numbers, once enough of your games have both. */
@@ -433,7 +433,16 @@ class CoachService extends EventTarget {
   accOf(id, side) { const b = this.baseAcc(id, side); return b == null ? null : this.calAcc(b); }
 
   /** Accuracy from a full review's per-ply losses. */
-  accFromLosses(loss, side) { return this.calAcc(paramAccuracy(loss, side, this.accParams || DEFAULT_PARAMS)); }
+  accFromLosses(loss, side, depth = null) { return this.calAcc(paramAccuracy(loss, side, this.paramsFor(depth))); }
+
+  /** The accuracy formula fitted at the depth closest to the one a game was reviewed at. */
+  paramsFor(depth) {
+    const P = this.accParams;
+    if (!P) return DEFAULT_PARAMS;
+    const by = P.byDepth ? Object.values(P.byDepth) : [];
+    if (!depth || !by.length) return P;
+    return by.reduce((a, b) => (Math.abs(b.depth - depth) < Math.abs(a.depth - depth) ? b : a));
+  }
 
   /** Background review progress: {done, total, deep}. */
   reviewProgress() {
